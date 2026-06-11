@@ -25,5 +25,8 @@ target
 
 /target
 
+/*.bin
+/corpus.txt
+
 # Java compiled classes
 *.class
