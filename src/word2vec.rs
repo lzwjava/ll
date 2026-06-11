@@ -13,6 +13,39 @@ use std::time::Instant;
 
 // ─── Constants (matching original) ────────────────────────────────────────────
 
+/// Thread-safe wrapper for raw pointers used in multi-threaded training.
+/// SAFETY: matches original C word2vec's pthread approach — benign data races.
+#[derive(Clone, Copy)]
+struct TrainPtrs(*mut f32, *mut f32, *const f32, *const u32, *const u64);
+unsafe impl Send for TrainPtrs {}
+
+impl TrainPtrs {
+    fn run(
+        &self,
+        sen: &[usize],
+        window: usize,
+        negative: usize,
+        alpha: f32,
+        d: usize,
+        cbow: bool,
+        neu1e: &mut [f32],
+        rng: &mut Rng,
+    ) {
+        if cbow {
+            train_cbow_raw(
+                sen, window, negative, alpha, d, self.0, self.1, self.2, self.3, neu1e, rng,
+            );
+        } else {
+            train_sg_raw(
+                sen, window, negative, alpha, d, self.0, self.1, self.2, self.3, neu1e, rng,
+            );
+        }
+    }
+    fn word_count(&self, wi: usize) -> u64 {
+        unsafe { *self.4.add(wi) }
+    }
+}
+
 const EXP_TABLE_SIZE: usize = 1000;
 const MAX_EXP: f32 = 6.0;
 const TABLE_SIZE: usize = 100_000_000; // 1e8 negative sampling table
@@ -100,6 +133,7 @@ struct TrainCfg {
     epochs: usize,
     cbow: bool,
     subsample_threshold: f32, // 0 = disabled
+    threads: usize,
 }
 
 impl Default for TrainCfg {
@@ -112,6 +146,7 @@ impl Default for TrainCfg {
             epochs: 5,
             cbow: false,
             subsample_threshold: 1e-4,
+            threads: 4,
         }
     }
 }
@@ -501,6 +536,167 @@ impl Model {
     }
 }
 
+// ─── Raw pointer training functions (for multi-threaded path) ────────────────
+
+#[inline]
+fn sigmoid_raw(x: f32, exp_table: *const f32) -> f32 {
+    if x >= MAX_EXP {
+        1.0
+    } else if x <= -MAX_EXP {
+        0.0
+    } else {
+        let i = ((x + MAX_EXP) * (EXP_TABLE_SIZE as f32 / MAX_EXP / 2.0)) as usize;
+        unsafe { *exp_table.add(i.min(EXP_TABLE_SIZE - 1)) }
+    }
+}
+
+fn train_sg_raw(
+    sent: &[usize],
+    window: usize,
+    negative: usize,
+    alpha: f32,
+    d: usize,
+    syn0: *mut f32,
+    syn1: *mut f32,
+    exp_table: *const f32,
+    neg_table: *const u32,
+    neu1e: &mut [f32],
+    rng: &mut Rng,
+) {
+    for pos in 0..sent.len() {
+        let center = sent[pos];
+        let b = (rng.next_u64() % window as u64) as usize;
+        for a in b..(2 * window + 1 - b) {
+            if a == window {
+                continue;
+            }
+            let cp = pos as isize - window as isize + a as isize;
+            if cp < 0 || cp as usize >= sent.len() {
+                continue;
+            }
+            let l1 = sent[cp as usize] * d;
+            for v in neu1e.iter_mut() {
+                *v = 0.0;
+            }
+            for nd in 0..=negative {
+                let (tgt, label) = if nd == 0 {
+                    (center, 1.0f32)
+                } else {
+                    let t = unsafe { *neg_table.add((rng.next_u64() >> 16) as usize % TABLE_SIZE) }
+                        as usize;
+                    if t == center {
+                        continue;
+                    }
+                    (t, 0.0f32)
+                };
+                let l2 = tgt * d;
+                let f: f32 = (0..d)
+                    .map(|c| unsafe { *syn0.add(l1 + c) * *syn1.add(l2 + c) })
+                    .sum();
+                let g = (label - sigmoid_raw(f, exp_table)) * alpha;
+                unsafe {
+                    for c in 0..d {
+                        neu1e[c] += g * *syn1.add(l2 + c);
+                    }
+                    for c in 0..d {
+                        *syn1.add(l2 + c) += g * *syn0.add(l1 + c);
+                    }
+                }
+            }
+            unsafe {
+                for c in 0..d {
+                    *syn0.add(l1 + c) += neu1e[c];
+                }
+            }
+        }
+    }
+}
+
+fn train_cbow_raw(
+    sent: &[usize],
+    window: usize,
+    negative: usize,
+    alpha: f32,
+    d: usize,
+    syn0: *mut f32,
+    syn1: *mut f32,
+    exp_table: *const f32,
+    neg_table: *const u32,
+    neu1e: &mut [f32],
+    rng: &mut Rng,
+) {
+    for pos in 0..sent.len() {
+        let center = sent[pos];
+        let mut neu1 = vec![0.0f32; d];
+        let mut cw = 0u32;
+        let b = (rng.next_u64() % window as u64) as usize;
+        for a in b..(2 * window + 1 - b) {
+            if a == window {
+                continue;
+            }
+            let cp = pos as isize - window as isize + a as isize;
+            if cp < 0 || cp as usize >= sent.len() {
+                continue;
+            }
+            let l1 = sent[cp as usize] * d;
+            unsafe {
+                for c in 0..d {
+                    neu1[c] += *syn0.add(l1 + c);
+                }
+            }
+            cw += 1;
+        }
+        if cw == 0 {
+            continue;
+        }
+        let inv_cw = 1.0 / cw as f32;
+        for c in 0..d {
+            neu1[c] *= inv_cw;
+        }
+        for v in neu1e.iter_mut() {
+            *v = 0.0;
+        }
+        for nd in 0..=negative {
+            let (tgt, label) = if nd == 0 {
+                (center, 1.0f32)
+            } else {
+                let t = unsafe { *neg_table.add((rng.next_u64() >> 16) as usize % TABLE_SIZE) }
+                    as usize;
+                if t == center {
+                    continue;
+                }
+                (t, 0.0f32)
+            };
+            let l2 = tgt * d;
+            let f: f32 = (0..d).map(|c| neu1[c] * unsafe { *syn1.add(l2 + c) }).sum();
+            let g = (label - sigmoid_raw(f, exp_table)) * alpha;
+            unsafe {
+                for c in 0..d {
+                    neu1e[c] += g * *syn1.add(l2 + c);
+                }
+                for c in 0..d {
+                    *syn1.add(l2 + c) += g * neu1[c];
+                }
+            }
+        }
+        for a in b..(2 * window + 1 - b) {
+            if a == window {
+                continue;
+            }
+            let cp = pos as isize - window as isize + a as isize;
+            if cp < 0 || cp as usize >= sent.len() {
+                continue;
+            }
+            let l1 = sent[cp as usize] * d;
+            unsafe {
+                for c in 0..d {
+                    *syn0.add(l1 + c) += neu1e[c];
+                }
+            }
+        }
+    }
+}
+
 // ─── Vectors (for distance / analogy queries) ────────────────────────────────
 
 struct Vectors {
@@ -777,6 +973,7 @@ fn cmd_train(args: &[String]) -> io::Result<()> {
     let lr = parse_flag_f32(args, "-lr", 0.025);
     let min_count = parse_flag_usize(args, "-min-count", 5) as u32;
     let cbow = parse_flag_usize(args, "-cbow", 0) == 1;
+    let threads = parse_flag_usize(args, "-threads", 4);
     let binary = parse_flag_usize(args, "-binary", 1) == 1;
     let sample = parse_flag_f32(args, "-sample", 1e-4);
 
@@ -796,6 +993,7 @@ fn cmd_train(args: &[String]) -> io::Result<()> {
         epochs,
         cbow,
         subsample_threshold: sample,
+        threads,
     };
 
     model.train(&input, &cfg)?;
