@@ -1,17 +1,19 @@
+mod word2vec;
+
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
-    Terminal,
 };
-use sysinfo::{Disks, System};
 use std::io;
+use sysinfo::{Disks, System};
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -19,6 +21,10 @@ fn main() -> io::Result<()> {
 
     match cmd {
         "info" => run_info(),
+        "word2vec" => {
+            let w2v_args: Vec<String> = args[2..].to_vec();
+            word2vec::main(&w2v_args)
+        }
         _ => run_hello(),
     }
 }
@@ -92,7 +98,11 @@ fn run_info() -> io::Result<()> {
 }
 
 fn cpu_rows(sys: &System) -> Vec<Vec<String>> {
-    let brand = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
+    let brand = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().to_string())
+        .unwrap_or_default();
     let count = sys.cpus().len();
     let usage = sys.global_cpu_usage();
     vec![
@@ -126,7 +136,11 @@ fn disk_rows(disks: &Disks) -> Vec<Vec<String>> {
 
 fn make_table<'a>(rows: &'a [Vec<String>], title: &'a str, headers: &'a [&'a str]) -> Table<'a> {
     let header = Row::new(headers.iter().map(|h| {
-        Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        Cell::from(*h).style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
     }));
 
     let data_rows: Vec<Row> = rows
@@ -134,7 +148,10 @@ fn make_table<'a>(rows: &'a [Vec<String>], title: &'a str, headers: &'a [&'a str
         .map(|r| Row::new(r.iter().map(|c| Cell::from(c.as_str()))))
         .collect();
 
-    let widths: Vec<Constraint> = headers.iter().map(|_| Constraint::Ratio(1, headers.len() as u32)).collect();
+    let widths: Vec<Constraint> = headers
+        .iter()
+        .map(|_| Constraint::Ratio(1, headers.len() as u32))
+        .collect();
 
     Table::new(data_rows, widths)
         .header(header)
