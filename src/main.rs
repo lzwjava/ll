@@ -1,3 +1,4 @@
+mod gcloud;
 mod word2vec;
 
 use crossterm::{
@@ -21,11 +22,20 @@ fn main() -> io::Result<()> {
 
     match cmd {
         "info" => run_info(),
+        "gcloud" => gcloud::main(),
         "word2vec" => {
             let w2v_args: Vec<String> = args[2..].to_vec();
             word2vec::main(&w2v_args)
         }
-        _ => run_hello(),
+        _ => {
+            eprintln!("Usage: ll <command>");
+            eprintln!();
+            eprintln!("Commands:");
+            eprintln!("  info     System info (CPU, memory, disks)");
+            eprintln!("  gcloud   Google Cloud account & config");
+            eprintln!("  word2vec Word2Vec training");
+            Ok(())
+        }
     }
 }
 
