@@ -1,4 +1,5 @@
 mod gcloud;
+mod uno;
 mod word2vec;
 
 use crossterm::{
@@ -23,6 +24,10 @@ fn main() -> io::Result<()> {
     match cmd {
         "info" => run_info(),
         "gcloud" => gcloud::main(),
+        "uno" => {
+            let uno_args: Vec<String> = args[2..].to_vec();
+            uno::main_with_args(&uno_args)
+        }
         "word2vec" => {
             let w2v_args: Vec<String> = args[2..].to_vec();
             word2vec::main(&w2v_args)
@@ -33,6 +38,7 @@ fn main() -> io::Result<()> {
             eprintln!("Commands:");
             eprintln!("  info     System info (CPU, memory, disks)");
             eprintln!("  gcloud   Google Cloud account & config");
+            eprintln!("  uno      Arduino UNO serial monitor");
             eprintln!("  word2vec Word2Vec training");
             Ok(())
         }
