@@ -24,7 +24,7 @@ const MAX_POINTS: usize = 200;
 
 fn open_port() -> io::Result<Box<dyn serialport::SerialPort>> {
     serialport::new(PORT, BAUD)
-        .timeout(Duration::from_millis(500))
+        .timeout(Duration::from_millis(10))
         .open()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Cannot open {} at {} baud: {}", PORT, BAUD, e)))
 }
@@ -92,8 +92,8 @@ fn run_status() -> io::Result<()> {
     let mut reader = io::BufReader::new(port);
 
     loop {
-        // Read as many lines as available
-        loop {
+        // Read available lines, but cap at 30 per frame so keyboard stays responsive
+        for _ in 0..30 {
             let mut single = String::new();
             match reader.read_line(&mut single) {
                 Ok(0) => break, // timeout, no data
