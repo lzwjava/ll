@@ -3,12 +3,15 @@
 //! `ll algorithm list` shows every entry grouped by category.
 //! Names are matched ignoring case and dashes (`quicksort` == `quick-sort`).
 
+pub mod arrays;
 pub mod crypto;
 pub mod dnc;
 pub mod dp;
+pub mod geometry;
 pub mod graph;
 pub mod greedy;
 pub mod ml;
+pub mod numbertheory;
 pub mod searching;
 pub mod sorting;
 pub mod strings;
@@ -46,6 +49,31 @@ pub const ALGORITHMS: &[Algorithm] = &[
         category: "Searching",
         desc: "Depth-first traversal",
         run: searching::dfs,
+    },
+    Algorithm {
+        name: "binary-search-on-answer",
+        category: "Searching",
+        desc: "Parametric search: min feasible value via a monotone predicate",
+        run: searching::binary_search_on_answer,
+    },
+    // ─── Array Techniques ───────────────────────────────────────────────────────
+    Algorithm {
+        name: "two-pointers",
+        category: "Array Techniques",
+        desc: "Two pointers & sliding window subarray scans in O(n)",
+        run: arrays::two_pointers,
+    },
+    Algorithm {
+        name: "prefix-sums",
+        category: "Array Techniques",
+        desc: "O(1) range sums + O(1) range updates via difference array",
+        run: arrays::prefix_sums,
+    },
+    Algorithm {
+        name: "monotonic-stack",
+        category: "Array Techniques",
+        desc: "Next-greater-element & largest rectangle in histogram",
+        run: arrays::monotonic_stack,
     },
     // ─── Sorting ──────────────────────────────────────────────────────────────
     Algorithm {
@@ -127,6 +155,18 @@ pub const ALGORITHMS: &[Algorithm] = &[
         desc: "Heuristic pathfinding on a grid (Manhattan)",
         run: graph::a_star,
     },
+    Algorithm {
+        name: "zero-one-bfs",
+        category: "Graph",
+        desc: "Deque shortest path for 0/1 weights in O(V+E)",
+        run: graph::zero_one_bfs,
+    },
+    Algorithm {
+        name: "tarjan-scc",
+        category: "Graph",
+        desc: "Strongly connected components from one DFS (low-links)",
+        run: graph::tarjan_scc,
+    },
     // ─── Dynamic Programming ──────────────────────────────────────────────────
     Algorithm {
         name: "fibonacci",
@@ -157,6 +197,43 @@ pub const ALGORITHMS: &[Algorithm] = &[
         category: "Dynamic Programming",
         desc: "Optimal matrix chain multiplication order",
         run: dp::matrix_chain,
+    },
+    Algorithm {
+        name: "kadane",
+        category: "Dynamic Programming",
+        desc: "Maximum subarray sum in O(n)",
+        run: dp::kadane,
+    },
+    Algorithm {
+        name: "lis",
+        category: "Dynamic Programming",
+        desc: "Longest increasing subsequence in O(n log n) (patience)",
+        run: dp::lis,
+    },
+    Algorithm {
+        name: "coin-change",
+        category: "Dynamic Programming",
+        desc: "Unbounded knapsack: min coins & combination counts",
+        run: dp::coin_change,
+    },
+    Algorithm {
+        name: "bitmask-dp",
+        category: "Dynamic Programming",
+        desc: "TSP over subsets — dp[mask][i] in O(2ⁿ·n²)",
+        run: dp::bitmask_dp,
+    },
+    // ─── Number Theory ────────────────────────────────────────────────────────
+    Algorithm {
+        name: "sieve",
+        category: "Number Theory",
+        desc: "Primes ≤ N by crossing out multiples, O(n log log n)",
+        run: numbertheory::sieve,
+    },
+    Algorithm {
+        name: "extended-gcd",
+        category: "Number Theory",
+        desc: "Bézout ax + by = gcd → modular inverse, CRT building block",
+        run: numbertheory::extended_gcd,
     },
     // ─── Cryptographic / Hashing ──────────────────────────────────────────────
     Algorithm {
@@ -207,6 +284,18 @@ pub const ALGORITHMS: &[Algorithm] = &[
         category: "Tree & Data Structure",
         desc: "Disjoint set with path compression + union by rank",
         run: trees::union_find,
+    },
+    Algorithm {
+        name: "segment-tree",
+        category: "Tree & Data Structure",
+        desc: "Lazy range-add + range-sum queries in O(log n)",
+        run: trees::segment_tree,
+    },
+    Algorithm {
+        name: "fenwick-tree",
+        category: "Tree & Data Structure",
+        desc: "Binary indexed tree: prefix sums & inversion counting",
+        run: trees::fenwick_tree,
     },
     // ─── Divide & Conquer ─────────────────────────────────────────────────────
     Algorithm {
@@ -265,6 +354,12 @@ pub const ALGORITHMS: &[Algorithm] = &[
         desc: "Bad-character text search (Horspool variant)",
         run: strings::boyer_moore,
     },
+    Algorithm {
+        name: "z-algorithm",
+        category: "String",
+        desc: "Z-array pattern matching — KMP's prefix trick, one array",
+        run: strings::z_algorithm,
+    },
     // ─── Greedy ───────────────────────────────────────────────────────────────
     Algorithm {
         name: "huffman",
@@ -283,6 +378,13 @@ pub const ALGORITHMS: &[Algorithm] = &[
         category: "Greedy",
         desc: "Best value/weight ratio first, take fractions",
         run: greedy::fractional_knapsack,
+    },
+    // ─── Geometry ──────────────────────────────────────────────────────────────
+    Algorithm {
+        name: "convex-hull",
+        category: "Geometry",
+        desc: "Andrew's monotone chain hull of 2-D points, O(n log n)",
+        run: geometry::convex_hull,
     },
 ];
 

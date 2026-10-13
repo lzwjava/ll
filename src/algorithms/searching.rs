@@ -22,6 +22,52 @@ pub fn binary_search() {
     }
 }
 
+// ─── Binary search on the answer (parametric search) ─────────────────────────
+
+pub fn binary_search_on_answer() {
+    // "Ship all packages within `days` days — what is the smallest hull capacity?"
+    let weights = [7i64, 3, 1, 5, 4, 8, 2, 6];
+    let days = 4usize;
+
+    let checks = std::cell::Cell::new(0usize);
+    let feasible = |cap: i64| {
+        checks.set(checks.get() + 1);
+        let (mut used, mut cur) = (1usize, 0i64);
+        for &w in &weights {
+            if cur + w > cap {
+                used += 1;
+                cur = 0;
+            }
+            cur += w;
+        }
+        used <= days
+    };
+
+    let lo = *weights.iter().max().unwrap(); // must fit the heaviest package
+    let hi = weights.iter().sum(); // one ship takes everything
+    let (mut l, mut r) = (lo, hi);
+    while l < r {
+        let mid = l + (r - l) / 2;
+        if feasible(mid) {
+            r = mid;
+        } else {
+            l = mid + 1;
+        }
+    }
+    let found = l;
+    let brute = (lo..=hi).find(|&cap| feasible(cap)).unwrap();
+
+    println!("package weights = {weights:?}, deadline = {days} days");
+    println!("search range = [{lo}, {hi}]  (max package … total weight)");
+    println!("smallest feasible capacity = {found}");
+    println!("linear scan over the same range agrees: {}", found == brute);
+    println!(
+        "{} predicate checks instead of {} — monotone predicate turns \"find min feasible\" into O(log R)",
+        checks.get(),
+        hi - lo + 1
+    );
+}
+
 fn binary<T: Ord>(arr: &[T], target: T) -> Option<usize> {
     let (mut lo, mut hi) = (0usize, arr.len());
     while lo < hi {

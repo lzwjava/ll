@@ -108,6 +108,62 @@ fn rk_search(text: &str, pattern: &str) -> Vec<usize> {
     hits
 }
 
+// ─── Z-algorithm ─────────────────────────────────────────────────────────────
+
+pub fn z_algorithm() {
+    let text = "ababcababcabcab";
+    let pattern = "abcab";
+
+    // Z[i] = longest substring starting at i that matches a prefix of the input.
+    let zpat = z_function(pattern.as_bytes());
+
+    // Pattern matching: Z-array of "pattern$text" — a hit needs Z ≥ pattern length.
+    let mut concat = pattern.as_bytes().to_vec();
+    concat.push(b'$'); // separator that cannot appear in the pattern
+    concat.extend_from_slice(text.as_bytes());
+    let z = z_function(&concat);
+    let sep = pattern.len() + 1;
+    let hits: Vec<usize> = z
+        .iter()
+        .enumerate()
+        .skip(sep)
+        .filter(|&(_, &v)| v >= pattern.len())
+        .map(|(i, _)| i - sep)
+        .collect();
+
+    let naive: Vec<usize> = (0..=text.len() - pattern.len())
+        .filter(|&i| text.as_bytes()[i..i + pattern.len()] == *pattern.as_bytes())
+        .collect();
+
+    println!("text    = \"{text}\"");
+    println!("pattern = \"{pattern}\"");
+    println!("Z(pattern) = {zpat:?}");
+    println!("matches at indices: {hits:?}");
+    println!("matches naive scan: {}", hits == naive);
+    println!("the Z-box [l, r) is reused exactly like KMP's prefix table → O(n+m),");
+    println!("but the one-array formulation is usually easier to get right under time pressure");
+}
+
+/// Z-array: `z[0]` is 0 by convention, `z[i]` = longest common prefix of `s` and `s[i..]`.
+fn z_function(s: &[u8]) -> Vec<usize> {
+    let n = s.len();
+    let mut z = vec![0usize; n];
+    let (mut l, mut r) = (0usize, 0usize);
+    for i in 1..n {
+        if i < r {
+            z[i] = (r - i).min(z[i - l]); // reuse what the previous box already proved
+        }
+        while i + z[i] < n && s[z[i]] == s[i + z[i]] {
+            z[i] += 1;
+        }
+        if i + z[i] > r {
+            l = i;
+            r = i + z[i];
+        }
+    }
+    z
+}
+
 // ─── Boyer-Moore (Horspool bad-character rule) ────────────────────────────────
 
 pub fn boyer_moore() {

@@ -338,3 +338,188 @@ fn astar_impl(
     }
     None
 }
+
+// ─── 0/1 BFS ─────────────────────────────────────────────────────────────────
+
+/// Directed graph whose edge weights are only 0 or 1.
+const ZERO_ONE_EDGES: &[(usize, usize, i64)] = &[
+    (0, 1, 0),
+    (0, 2, 1),
+    (1, 3, 1),
+    (2, 3, 0),
+    (1, 4, 1),
+    (2, 4, 1),
+    (3, 4, 0),
+    (3, 5, 1),
+    (4, 5, 0),
+];
+
+fn directed_adj(weights: &[(usize, usize, i64)], n: usize) -> Vec<Vec<(usize, i64)>> {
+    let mut g = vec![Vec::new(); n];
+    for &(u, v, w) in weights {
+        g[u].push((v, w));
+    }
+    g
+}
+
+pub fn zero_one_bfs() {
+    let g = directed_adj(&ZERO_ONE_EDGES, 6);
+    let fast = zero_one_impl(&g, 0);
+    let djk = dijkstra_impl(&g, 0);
+
+    println!("directed graph with 0/1 weights: {ZERO_ONE_EDGES:?}");
+    println!("  node | 0/1 BFS | Dijkstra");
+    for i in 0..g.len() {
+        println!("  {i:>4} | {:>7} | {:>8}", fast[i], djk[i]);
+    }
+    println!("identical distances: {}", fast == djk);
+    println!("a 0-weight edge goes to the FRONT of the deque, so the popped node always");
+    println!("has the smallest tentative distance → bucket-queue behaviour in O(V+E)");
+    println!("(Dijkstra needs a heap: O((V+E) log V))");
+}
+
+fn zero_one_impl(g: &[Vec<(usize, i64)>], s: usize) -> Vec<i64> {
+    let mut dist = vec![i64::MAX; g.len()];
+    let mut dq = std::collections::VecDeque::new();
+    dist[s] = 0;
+    dq.push_back(s);
+    while let Some(u) = dq.pop_front() {
+        for &(v, w) in &g[u] {
+            if dist[u] + w < dist[v] {
+                dist[v] = dist[u] + w;
+                if w == 0 {
+                    dq.push_front(v); // same distance class — process next
+                } else {
+                    dq.push_back(v); // one class worse
+                }
+            }
+        }
+    }
+    dist
+}
+
+// ─── Tarjan strongly connected components ───────────────────────────────────
+
+const SCC_EDGES: &[(usize, usize)] = &[
+    (0, 1),
+    (1, 2),
+    (2, 0), // cycle A
+    (2, 3),
+    (3, 4),
+    (4, 5),
+    (5, 3), // cycle B
+    (5, 6), // tail
+];
+
+pub fn tarjan_scc() {
+    const N: usize = 7;
+    let mut g = vec![Vec::new(); N];
+    for &(u, v) in SCC_EDGES {
+        g[u].push(v);
+    }
+
+    let mut comps = tarjan(&g);
+    for c in &mut comps {
+        c.sort_unstable();
+    }
+    comps.sort_by_key(|c| c[0]);
+
+    // component id per node
+    let mut owner = vec![usize::MAX; N];
+    for (id, c) in comps.iter().enumerate() {
+        for &v in c {
+            owner[v] = id;
+        }
+    }
+
+    // transitive closure → u and v share an SCC iff they reach each other
+    let mut reach = vec![vec![false; N]; N];
+    for u in 0..N {
+        let mut st = vec![u];
+        reach[u][u] = true;
+        while let Some(x) = st.pop() {
+            for &y in &g[x] {
+                if !reach[u][y] {
+                    reach[u][y] = true;
+                    st.push(y);
+                }
+            }
+        }
+    }
+    let ok = (0..N).all(|u| {
+        (0..N).all(|v| (reach[u][v] && reach[v][u]) == (owner[u] == owner[v]))
+    });
+
+    println!("directed edges: {SCC_EDGES:?}");
+    println!("strongly connected components:");
+    for (id, c) in comps.iter().enumerate() {
+        println!("  scc {id}: {c:?}");
+    }
+    println!("mutual-reachability ⇔ same component for every pair: {ok}");
+    println!("one DFS maintaining low-link values → O(V+E);");
+    println!("collapsing each SCC gives the condensation DAG (used by 2-SAT and cycle checks)");
+}
+
+struct Tarjan<'a> {
+    g: &'a [Vec<usize>],
+    index: Vec<usize>, // discovery order, usize::MAX = unvisited
+    low: Vec<usize>,   // earliest discovery reachable through the subtree
+    on_stack: Vec<bool>,
+    stack: Vec<usize>,
+    next: usize,
+    comps: Vec<Vec<usize>>,
+}
+
+impl Tarjan<'_> {
+    fn visit(&mut self, u: usize) {
+        self.index[u] = self.next;
+        self.low[u] = self.next;
+        self.next += 1;
+        self.stack.push(u);
+        self.on_stack[u] = true;
+
+        let neigh = self.g[u].clone(); // clone: visit() needs &mut self
+        for v in neigh {
+            if self.index[v] == usize::MAX {
+                self.visit(v);
+                self.low[u] = self.low[u].min(self.low[v]);
+            } else if self.on_stack[v] {
+                // back edge into the current SCC
+                self.low[u] = self.low[u].min(self.index[v]);
+            }
+        }
+
+        // u roots an SCC: everything above u on the stack belongs to it
+        if self.low[u] == self.index[u] {
+            let mut comp = Vec::new();
+            loop {
+                let w = self.stack.pop().expect("u is on the stack");
+                self.on_stack[w] = false;
+                comp.push(w);
+                if w == u {
+                    break;
+                }
+            }
+            self.comps.push(comp);
+        }
+    }
+}
+
+fn tarjan(g: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let n = g.len();
+    let mut t = Tarjan {
+        g,
+        index: vec![usize::MAX; n],
+        low: vec![0; n],
+        on_stack: vec![false; n],
+        stack: Vec::new(),
+        next: 0,
+        comps: Vec::new(),
+    };
+    for u in 0..n {
+        if t.index[u] == usize::MAX {
+            t.visit(u);
+        }
+    }
+    t.comps
+}

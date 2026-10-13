@@ -324,3 +324,236 @@ pub fn union_find() {
     }
     println!("amortized ~O(α(n)) per op — near-constant (α = inverse Ackermann)");
 }
+
+// ─── Segment tree (lazy range-add / range-sum) ──────────────────────────────
+
+pub struct SegTree {
+    n: usize,
+    sum: Vec<i64>,
+    lazy: Vec<i64>, // pending range additions
+}
+
+impl SegTree {
+    pub fn new(data: &[i64]) -> SegTree {
+        let n = data.len();
+        let mut st = SegTree {
+            n,
+            sum: vec![0; 4 * n],
+            lazy: vec![0; 4 * n],
+        };
+        st.build(1, 0, n, data);
+        st
+    }
+
+    fn build(&mut self, node: usize, lo: usize, hi: usize, data: &[i64]) {
+        if lo + 1 == hi {
+            self.sum[node] = data[lo];
+            return;
+        }
+        let mid = (lo + hi) / 2;
+        self.build(2 * node, lo, mid, data);
+        self.build(2 * node + 1, mid, hi, data);
+        self.sum[node] = self.sum[2 * node] + self.sum[2 * node + 1];
+    }
+
+    fn apply(&mut self, node: usize, len: usize, v: i64) {
+        self.sum[node] += v * len as i64;
+        self.lazy[node] += v;
+    }
+
+    /// Hand a pending update down to the children (only non-leaves have them).
+    fn push(&mut self, node: usize, len: usize) {
+        if self.lazy[node] == 0 {
+            return;
+        }
+        let v = self.lazy[node];
+        if len > 1 {
+            self.apply(2 * node, len / 2, v);
+            self.apply(2 * node + 1, len / 2, v);
+        }
+        self.lazy[node] = 0;
+    }
+
+    /// Add `v` to every index in `[ql, qr)`.
+    fn add(&mut self, node: usize, lo: usize, hi: usize, ql: usize, qr: usize, v: i64) {
+        if ql >= qr || lo >= hi {
+            return;
+        }
+        if ql <= lo && hi <= qr {
+            self.apply(node, hi - lo, v); // fully covered → stop here
+            return;
+        }
+        if hi - lo == 1 {
+            return; // uncovered leaf — it lies outside [ql, qr)
+        }
+        self.push(node, hi - lo);
+        let mid = (lo + hi) / 2;
+        self.add(2 * node, lo, mid, ql, qr, v);
+        self.add(2 * node + 1, mid, hi, ql, qr, v);
+        self.sum[node] = self.sum[2 * node] + self.sum[2 * node + 1];
+    }
+
+    /// Sum of `[ql, qr)`.
+    fn ask(&mut self, node: usize, lo: usize, hi: usize, ql: usize, qr: usize) -> i64 {
+        if ql >= qr || lo >= hi {
+            return 0;
+        }
+        if ql <= lo && hi <= qr {
+            return self.sum[node];
+        }
+        if hi - lo == 1 {
+            return 0; // uncovered leaf — it lies outside [ql, qr)
+        }
+        self.push(node, hi - lo);
+        let mid = (lo + hi) / 2;
+        self.ask(2 * node, lo, mid, ql, qr) + self.ask(2 * node + 1, mid, hi, ql, qr)
+    }
+
+    pub fn range_add(&mut self, l: usize, r: usize, v: i64) {
+        self.add(1, 0, self.n, l, r, v);
+    }
+
+    pub fn query(&mut self, l: usize, r: usize) -> i64 {
+        self.ask(1, 0, self.n, l, r)
+    }
+}
+
+pub fn segment_tree() {
+    let data = [5i64, 2, 7, 1, 3, 6, 4, 0];
+    let mut seg = SegTree::new(&data);
+    let mut brute = data.to_vec();
+    let mut ok = true;
+
+    println!("initial array = {data:?}");
+    let scripted: [(&str, usize, usize, i64); 4] = [
+        ("add", 2, 6, 3),
+        ("sum", 0, 8, 0),
+        ("add", 0, 4, -2),
+        ("sum", 3, 7, 0),
+    ];
+    for (op, l, r, v) in scripted {
+        if op == "add" {
+            seg.range_add(l, r, v);
+            for x in &mut brute[l..r] {
+                *x += v;
+            }
+            println!("  range_add [{l}, {r}) += {v}");
+        } else {
+            let got = seg.query(l, r);
+            let want: i64 = brute[l..r].iter().sum();
+            ok &= got == want;
+            println!("  query [{l}, {r}) = {got:>3}   (brute force = {want:>3})");
+        }
+    }
+
+    // Randomized soak: 500 interleaved updates/queries against a plain array.
+    let mut seed = 0xfeed_u64;
+    for _ in 0..500 {
+        let l = (next_rand(&mut seed) as usize) % data.len();
+        let r = l + 1 + (next_rand(&mut seed) as usize) % (data.len() - l);
+        if next_rand(&mut seed) % 2 == 0 {
+            let v = next_rand(&mut seed) as i64 % 21 - 10;
+            seg.range_add(l, r, v);
+            for x in &mut brute[l..r] {
+                *x += v;
+            }
+        } else {
+            ok &= seg.query(l, r) == brute[l..r].iter().sum::<i64>();
+        }
+    }
+    println!("500 random range-add / range-sum ops match a plain array: {ok}");
+    println!("O(n) build, O(log n) per update/query, O(n) space — lazy tags keep");
+    println!("whole covered segments from touching their children");
+}
+
+fn next_rand(seed: &mut u64) -> u64 {
+    *seed = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    *seed >> 33
+}
+
+// ─── Fenwick tree (binary indexed tree) ─────────────────────────────────────
+
+pub struct Fenwick {
+    bit: Vec<i64>, // 1-based; bit[i] covers a run of lowbit(i) elements
+}
+
+impl Fenwick {
+    pub fn new(n: usize) -> Fenwick {
+        Fenwick { bit: vec![0; n + 1] }
+    }
+
+    pub fn from(data: &[i64]) -> Fenwick {
+        let mut fw = Fenwick::new(data.len());
+        for (i, &v) in data.iter().enumerate() {
+            fw.add(i, v);
+        }
+        fw
+    }
+
+    /// Add `delta` at 0-based index `i`.
+    pub fn add(&mut self, mut i: usize, delta: i64) {
+        i += 1;
+        while i < self.bit.len() {
+            self.bit[i] += delta;
+            i += i & i.wrapping_neg(); // jump to the parent covering this run
+        }
+    }
+
+    /// Sum of `[0, i]` (0-based, inclusive).
+    pub fn prefix(&self, mut i: usize) -> i64 {
+        i += 1;
+        let mut s = 0i64;
+        while i > 0 {
+            s += self.bit[i];
+            i -= i & i.wrapping_neg();
+        }
+        s
+    }
+
+    /// Sum of `[l, r)` (0-based).
+    pub fn range_sum(&self, l: usize, r: usize) -> i64 {
+        if l == 0 {
+            self.prefix(r - 1)
+        } else {
+            self.prefix(r - 1) - self.prefix(l - 1)
+        }
+    }
+}
+
+pub fn fenwick_tree() {
+    let data = [5i64, 3, 8, 1, 6, 2, 7, 4];
+    let mut fw = Fenwick::from(&data);
+    let mut naive = data.to_vec();
+    let mut ok = true;
+
+    println!("array = {data:?}");
+    for (l, r) in [(0, 5), (2, 8), (3, 4), (1, 7)] {
+        let got = fw.range_sum(l, r);
+        let want: i64 = data[l..r].iter().sum();
+        ok &= got == want;
+        println!("  sum[{l}..{r}) = {got:>2}   (slice sum = {want:>2})");
+    }
+    fw.add(3, 10); // point update: data[3] 1 → 11
+    naive[3] += 10;
+    println!("after add(3, +10): sum[1..6) = {} (brute force = {})", fw.range_sum(1, 6), naive[1..6].iter().sum::<i64>());
+    ok &= fw.range_sum(1, 6) == naive[1..6].iter().sum::<i64>();
+    println!("all queries match brute force: {ok}\n");
+
+    // Killer app: count inversions in O(n log n) over the value domain.
+    let arr = [6i64, 3, 9, 1, 8, 2, 5, 4];
+    let mut ft = Fenwick::new(*arr.iter().max().unwrap() as usize + 1);
+    let mut inv = 0i64;
+    for (i, &v) in arr.iter().enumerate() {
+        inv += i as i64 - ft.prefix(v as usize); // how many seen values exceed v
+        ft.add(v as usize, 1);
+    }
+    let brute_inv: i64 = (0..arr.len())
+        .map(|i| (0..i).filter(|&j| arr[j] > arr[i]).count() as i64)
+        .sum();
+    println!("array = {arr:?}");
+    println!("inversions = {inv}  (brute force = {brute_inv}, match: {})", inv == brute_inv);
+    println!("O(log n) per update/query vs the segment tree's O(log n) with less code;");
+    println!("bit tricks i += i & −i / i −= i & −i walk the index DAG up and down");
+}

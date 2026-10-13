@@ -1,6 +1,15 @@
-//! Dynamic programming: fibonacci, 0/1 knapsack, LCS, edit distance, matrix chain.
+//! Dynamic programming: fibonacci, 0/1 knapsack, LCS, edit distance, matrix chain,
+//! Kadane, LIS, coin change, bitmask DP (TSP).
 
 use std::collections::HashMap;
+
+/// Small deterministic LCG so demos are reproducible without dependencies.
+fn next_rand(seed: &mut u64) -> u64 {
+    *seed = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    *seed >> 33
+}
 
 // ─── Fibonacci ────────────────────────────────────────────────────────────────
 
@@ -189,6 +198,279 @@ pub fn matrix_chain() {
     println!();
     println!("min scalar multiplications = {}", dp[0][n - 1]);
     println!("O(n^3) time, O(n^2) space");
+}
+
+// ─── Kadane's algorithm ──────────────────────────────────────────────────────
+
+pub fn kadane() {
+    let a = [-2i64, 1, -3, 4, -1, 2, 1, -5, 4];
+    let (best, s, e) = kadane_impl(&a);
+    let brute = brute_max_sub(&a);
+    println!("array = {a:?}");
+    println!(
+        "max subarray = {:?} → sum {best}  (a[{s}..{e}])",
+        &a[s..e]
+    );
+    println!("O(n²) brute force agrees: {}", best == brute);
+
+    let mut seed = 0x5eed_u64;
+    let mut ok = true;
+    for _ in 0..500 {
+        let n = 1 + next_rand(&mut seed) % 40;
+        let v: Vec<i64> = (0..n)
+            .map(|_| next_rand(&mut seed) as i64 % 21 - 10)
+            .collect();
+        let (got, gs, ge) = kadane_impl(&v);
+        ok &= got == brute_max_sub(&v) && v[gs..ge].iter().sum::<i64>() == got;
+    }
+    println!("500 random mixed-sign arrays verified (sum + window): {ok}");
+    println!("O(n) time, O(1) space — keep adding while profitable, reset when the run turns negative");
+}
+
+/// Returns `(best_sum, start, end_exclusive)`.
+fn kadane_impl(a: &[i64]) -> (i64, usize, usize) {
+    let (mut best, mut cur) = (a[0], a[0]);
+    let (mut bs, mut be, mut cs) = (0usize, 1usize, 0usize);
+    for i in 1..a.len() {
+        if cur < 0 {
+            cur = a[i];
+            cs = i; // previous run can never be worth extending
+        } else {
+            cur += a[i];
+        }
+        if cur > best {
+            best = cur;
+            bs = cs;
+            be = i + 1;
+        }
+    }
+    (best, bs, be)
+}
+
+fn brute_max_sub(a: &[i64]) -> i64 {
+    let mut best = i64::MIN;
+    for i in 0..a.len() {
+        let mut s = 0i64;
+        for j in i..a.len() {
+            s += a[j];
+            best = best.max(s);
+        }
+    }
+    best
+}
+
+// ─── Longest increasing subsequence ─────────────────────────────────────────
+
+pub fn lis() {
+    let a = [10i64, 9, 2, 5, 3, 7, 101, 18];
+    let idx = lis_indices(&a);
+    let seq: Vec<i64> = idx.iter().map(|&i| a[i]).collect();
+    let want = lis_length_dp(&a);
+
+    let valid = idx.windows(2).all(|w| w[0] < w[1])
+        && seq.windows(2).all(|w| w[0] < w[1]);
+
+    println!("array = {a:?}");
+    println!("LIS = {seq:?}  (indices {idx:?})");
+    println!("is a real strictly-increasing subsequence: {valid}");
+    println!("O(n²) DP length = {want}, match: {}", seq.len() == want);
+
+    let mut seed = 0x1234_u64;
+    let mut ok = true;
+    for _ in 0..300 {
+        let n = 1 + next_rand(&mut seed) % 30;
+        let v: Vec<i64> = (0..n).map(|_| next_rand(&mut seed) as i64 % 15).collect();
+        ok &= lis_indices(&v).len() == lis_length_dp(&v);
+    }
+    println!("300 random arrays verified against the O(n²) DP: {ok}");
+    println!("tails[k] = smallest tail of any increasing run of length k+1 → O(n log n)");
+}
+
+/// Patience-style LIS: `tails[k]` holds the index of the smallest tail for an
+/// increasing subsequence of length k+1; `prev` reconstructs the actual run.
+fn lis_indices(a: &[i64]) -> Vec<usize> {
+    let mut tails: Vec<usize> = Vec::new();
+    let mut prev = vec![usize::MAX; a.len()];
+    for i in 0..a.len() {
+        // first pile whose tail is ≥ a[i] (strictly increasing ⇒ lower bound)
+        let (mut lo, mut hi) = (0usize, tails.len());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if a[tails[mid]] < a[i] {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo > 0 {
+            prev[i] = tails[lo - 1];
+        }
+        if lo == tails.len() {
+            tails.push(i);
+        } else {
+            tails[lo] = i;
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut cur = *tails.last().unwrap();
+    loop {
+        out.push(cur);
+        if prev[cur] == usize::MAX {
+            break;
+        }
+        cur = prev[cur];
+    }
+    out.reverse();
+    out
+}
+
+fn lis_length_dp(a: &[i64]) -> usize {
+    let mut dp = vec![1usize; a.len()];
+    for i in 0..a.len() {
+        for j in 0..i {
+            if a[j] < a[i] {
+                dp[i] = dp[i].max(dp[j] + 1);
+            }
+        }
+    }
+    dp.into_iter().max().unwrap_or(0)
+}
+
+// ─── Coin change ─────────────────────────────────────────────────────────────
+
+pub fn coin_change() {
+    let coins = [1i64, 3, 4];
+    let amount = 6i64;
+
+    // dp[a] = fewest coins that add up to a
+    let mut dp = vec![i64::MAX / 2; amount as usize + 1];
+    dp[0] = 0;
+    for a in 1..=amount {
+        for &c in &coins {
+            if c <= a {
+                dp[a as usize] = dp[a as usize].min(dp[(a - c) as usize] + 1);
+            }
+        }
+    }
+
+    // dp2[w] = combinations that add up to w (order-independent)
+    let mut dp2 = vec![0u64; amount as usize + 1];
+    dp2[0] = 1;
+    for &c in &coins {
+        for a in c..=amount {
+            dp2[a as usize] += dp2[(a - c) as usize];
+        }
+    }
+
+    let bfs = min_coins_bfs(&coins, amount);
+    let rec = count_ways(&coins, 0, amount);
+
+    println!("coins = {coins:?}, amount = {amount}");
+    println!("min coins = {}  (BFS over amounts = {bfs}, match: {})", dp[amount as usize], dp[amount as usize] == bfs);
+    println!("combinations = {}  (recursive enumeration = {rec}, match: {})", dp2[amount as usize], dp2[amount as usize] == rec);
+    println!("min coins per amount 0..={amount}: {:?}", &dp[..=amount as usize]);
+    println!("combinations per amount 0..={amount}: {:?}", &dp2[..=amount as usize]);
+    println!("unbounded knapsack pattern → O(amount × #coins) time; loop coins outside for combinations,");
+    println!("inside for permutations — the classic order-of-loops gotcha");
+}
+
+fn min_coins_bfs(coins: &[i64], amount: i64) -> i64 {
+    if amount == 0 {
+        return 0;
+    }
+    let mut seen = vec![false; amount as usize + 1];
+    let mut frontier = vec![0i64];
+    seen[0] = true;
+    let mut steps = 0i64;
+    while !frontier.is_empty() {
+        steps += 1;
+        let mut next = Vec::new();
+        for &a in &frontier {
+            for &c in coins {
+                let na = a + c;
+                if na == amount {
+                    return steps;
+                }
+                if na < amount && !seen[na as usize] {
+                    seen[na as usize] = true;
+                    next.push(na);
+                }
+            }
+        }
+        frontier = next;
+    }
+    -1 // unreachable
+}
+
+/// Independent brute force: use coin `i` again, or move to coin `i+1`.
+fn count_ways(coins: &[i64], i: usize, rem: i64) -> u64 {
+    if rem == 0 {
+        return 1;
+    }
+    if rem < 0 || i == coins.len() {
+        return 0;
+    }
+    count_ways(coins, i, rem - coins[i]) + count_ways(coins, i + 1, rem)
+}
+
+// ─── Bitmask DP (TSP) ────────────────────────────────────────────────────────
+
+pub fn bitmask_dp() {
+    const N: usize = 9;
+    let mut seed = 0x1234_5678_u64;
+    let mut dist = vec![vec![0i64; N]; N];
+    for i in 0..N {
+        for j in i + 1..N {
+            let w = next_rand(&mut seed) % 90 + 10;
+            dist[i][j] = w as i64;
+            dist[j][i] = w as i64;
+        }
+    }
+
+    // dp[mask][i] = cheapest way to visit exactly `mask`, ending at city i
+    let full = (1u32 << N) - 1;
+    let mut dp = vec![vec![i64::MAX; N]; (1 << N) as usize];
+    dp[1][0] = 0; // start at city 0
+    for mask in 0..=full {
+        for i in 0..N {
+            if dp[mask as usize][i] == i64::MAX || mask & (1 << i) == 0 {
+                continue;
+            }
+            for j in 0..N {
+                if mask & (1 << j) != 0 {
+                    continue;
+                }
+                let nm = (mask | (1 << j)) as usize;
+                dp[nm][j] = dp[nm][j].min(dp[mask as usize][i] + dist[i][j]);
+            }
+        }
+    }
+    let best = (0..N).map(|i| dp[full as usize][i] + dist[i][0]).min().unwrap();
+
+    let mut brute = i64::MAX;
+    tsp_brute(&dist, 0, full ^ 1, 0, &mut brute);
+
+    println!("symmetric tour costs for {N} cities (seeded random, 10…99):");
+    for row in &dist {
+        println!("  {:?}", row);
+    }
+    println!("shortest closed tour = {best}");
+    println!("memo-free recursion over all (n−1)! = {} orderings = {brute}", (1..N as u64).product::<u64>());
+    println!("match: {}", best == brute);
+    println!("O(2ⁿ·n²) time / O(2ⁿ·n) space beats O(n!) — subsets become the DP index");
+}
+
+fn tsp_brute(dist: &[Vec<i64>], at: usize, remaining: u32, cost: i64, best: &mut i64) {
+    if remaining == 0 {
+        *best = (*best).min(cost + dist[at][0]);
+        return;
+    }
+    for v in 0..dist.len() {
+        if remaining & (1 << v) != 0 {
+            tsp_brute(dist, v, remaining ^ (1 << v), cost + dist[at][v], best);
+        }
+    }
 }
 
 fn print_chain(split: &[Vec<usize>], i: usize, j: usize) {
