@@ -1,9 +1,10 @@
+mod algorithms;
 mod gcloud;
 mod uno;
 mod word2vec;
 
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -24,6 +25,10 @@ fn main() -> io::Result<()> {
     match cmd {
         "info" => run_info(),
         "gcloud" => gcloud::main(),
+        "algorithm" => {
+            let algo_args: Vec<String> = args[2..].to_vec();
+            algorithms::main_with_args(&algo_args)
+        }
         "uno" => {
             let uno_args: Vec<String> = args[2..].to_vec();
             uno::main_with_args(&uno_args)
@@ -38,6 +43,7 @@ fn main() -> io::Result<()> {
             eprintln!("Commands:");
             eprintln!("  info     System info (CPU, memory, disks)");
             eprintln!("  gcloud   Google Cloud account & config");
+        eprintln!("  algorithm <name>  Run an algorithm demo ('algorithm list' for all)");
             eprintln!("  uno      Arduino UNO serial monitor");
             eprintln!("  word2vec Word2Vec training");
             Ok(())
@@ -199,7 +205,10 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io
 
 fn quit_on_key() -> io::Result<bool> {
     if let Event::Key(key) = event::read()? {
-        if key.code == KeyCode::Char('q') {
+        // Quit on 'q' or Ctrl+C (raw mode disables the default SIGINT).
+        if key.code == KeyCode::Char('q')
+            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+        {
             return Ok(true);
         }
     }
