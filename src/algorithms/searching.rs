@@ -1,4 +1,4 @@
-//! Searching: linear search, binary search, BFS, DFS.
+//! Searching: linear search, binary search, BFS, DFS, IDA* (8-puzzle).
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -175,4 +175,169 @@ fn dfs_rec(g: &[Vec<usize>], u: usize, seen: &mut [bool], out: &mut Vec<usize>) 
             dfs_rec(g, v, seen, out);
         }
     }
+}
+
+// ─── IDA* (iterative-deepening A* on the 8-puzzle) ───────────────────────────
+
+const GOAL: u32 = 123_456_780; // 1 2 3 / 4 5 6 / 7 8 _
+
+fn decode(mut s: u32) -> [u8; 9] {
+    let mut out = [0u8; 9];
+    for i in (0..9).rev() {
+        out[i] = (s % 10) as u8;
+        s /= 10;
+    }
+    out
+}
+
+fn encode(d: &[u8; 9]) -> u32 {
+    d.iter().fold(0u32, |acc, &x| acc * 10 + x as u32)
+}
+
+/// Blank moves: (new blank index, direction) — direction 0=up 1=down 2=left
+/// 3=right, so `dir ^ 1` is the way back.
+fn neighbours(b: usize) -> Vec<(usize, u8)> {
+    let (r, c) = (b / 3, b % 3);
+    let mut v = Vec::new();
+    if r > 0 {
+        v.push((b - 3, 0));
+    }
+    if r < 2 {
+        v.push((b + 3, 1));
+    }
+    if c > 0 {
+        v.push((b - 1, 2));
+    }
+    if c < 2 {
+        v.push((b + 1, 3));
+    }
+    v
+}
+
+/// Admissible heuristic: summed Manhattan distance of every tile.
+fn manhattan(s: u32) -> i32 {
+    let d = decode(s);
+    let mut h = 0;
+    for (i, &tile) in d.iter().enumerate() {
+        if tile == 0 {
+            continue;
+        }
+        let goal = tile as usize - 1; // tile k belongs at index k−1
+        let (gr, gc) = ((goal % 3) as i32, (goal / 3) as i32);
+        h += ((i % 3) as i32 - gr).abs() + ((i / 3) as i32 - gc).abs();
+    }
+    h as i32
+}
+
+fn ida_search(
+    path: &mut Vec<u32>,
+    moves: &mut Vec<u8>,
+    g: i32,
+    bound: i32,
+    exceeded: &mut i32,
+    nodes: &mut usize,
+) -> bool {
+    *nodes += 1;
+    let state = *path.last().unwrap();
+    let f = g + manhattan(state);
+    if f > bound {
+        *exceeded = (*exceeded).min(f); // next threshold
+        return false;
+    }
+    if state == GOAL {
+        return true;
+    }
+    let mut d = decode(state);
+    let blank = d.iter().position(|&x| x == 0).unwrap();
+    for (nb, dir) in neighbours(blank) {
+        if let Some(&last) = moves.last() {
+            if last == dir ^ 1 {
+                continue; // don't undo the move we just made
+            }
+        }
+        d.swap(blank, nb);
+        path.push(encode(&d));
+        moves.push(dir);
+        if ida_search(path, moves, g + 1, bound, exceeded, nodes) {
+            return true;
+        }
+        d.swap(blank, nb); // undo
+        path.pop();
+        moves.pop();
+    }
+    false
+}
+
+fn shortest_len_bfs(start: u32) -> Option<usize> {
+    use std::collections::{HashSet, VecDeque};
+    let mut seen = HashSet::new();
+    let mut q = VecDeque::new();
+    seen.insert(start);
+    q.push_back((start, 0usize));
+    while let Some((s, dist)) = q.pop_front() {
+        if s == GOAL {
+            return Some(dist);
+        }
+        let mut d = decode(s);
+        let blank = d.iter().position(|&x| x == 0).unwrap();
+        for (nb, _) in neighbours(blank) {
+            d.swap(blank, nb);
+            let next = encode(&d);
+            d.swap(blank, nb);
+            if seen.insert(next) {
+                q.push_back((next, dist + 1));
+            }
+        }
+    }
+    None
+}
+
+pub fn ida_star() {
+    let start = 876_543_210u32; // 8 7 6 / 5 4 3 / 2 1 _
+    let h0 = manhattan(start);
+    println!("start = {:?}   goal = {:?}", decode(start), decode(GOAL));
+    println!("h(start) = {h0} (Manhattan distance)");
+
+    let mut bound = h0;
+    let mut moves: Vec<u8> = Vec::new();
+    let mut nodes = 0usize;
+    let solution = loop {
+        let mut path = vec![start];
+        let mut exceeded = i32::MAX;
+        if ida_search(&mut path, &mut moves, 0, bound, &mut exceeded, &mut nodes) {
+            break Some(moves.clone());
+        }
+        if exceeded == i32::MAX {
+            break None;
+        }
+        bound = exceeded;
+        moves.clear();
+    };
+
+    let dirs = ['↑', '↓', '←', '→'];
+    match solution {
+        Some(mv) => {
+            println!("IDA* solved it: {} moves, {nodes} nodes expanded", mv.len());
+            println!("  moves: {}", mv.iter().map(|&d| dirs[d as usize]).collect::<String>());
+            // replay the move list from scratch
+            let mut s = start;
+            for &d in &mv {
+                let mut cur = decode(s);
+                let blank = cur.iter().position(|&x| x == 0).unwrap();
+                let (nb, _) = neighbours(blank)
+                    .into_iter()
+                    .find(|&(_, dir)| dir == d)
+                    .unwrap();
+                cur.swap(blank, nb);
+                s = encode(&cur);
+            }
+            println!("  replaying the moves reaches the goal: {}", s == GOAL);
+            let opt = shortest_len_bfs(start);
+            println!("  BFS optimum = {opt:?} → optimal: {}", opt == Some(mv.len()));
+        }
+        None => println!("no solution (unsolvable parity)"),
+    }
+    println!("IDA* = depth-first search with a cost bound, deepened only when f > bound;");
+    println!("memory O(depth) instead of BFS's O(b^d), while an admissible h (Manhattan)");
+    println!("prunes hopeless branches — the standard technique for 15-puzzle & SAT-style searches");
 }

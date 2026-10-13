@@ -1,5 +1,5 @@
 //! Dynamic programming: fibonacci, 0/1 knapsack, LCS, edit distance, matrix chain,
-//! Kadane, LIS, coin change, bitmask DP (TSP).
+//! Kadane, LIS, coin change, bitmask DP (TSP), digit DP.
 
 use std::collections::HashMap;
 
@@ -483,4 +483,74 @@ fn print_chain(split: &[Vec<usize>], i: usize, j: usize) {
     print!("×");
     print_chain(split, split[i][j] + 1, j);
     print!(")");
+}
+
+// ─── Digit DP ─────────────────────────────────────────────────────────────────
+
+fn contains_13(x: i64) -> bool {
+    let s = x.to_string();
+    s.as_bytes().windows(2).any(|w| w == b"13")
+}
+
+/// Count `0 ≤ x ≤ n` whose decimal digits contain "13" and x ≡ 0 (mod 13)
+/// (the classic "B-number" pattern). Memoized over the digit position.
+fn digit_dp_count(n: i64) -> i64 {
+    let digits: Vec<u8> = n.to_string().bytes().map(|b| b - b'0').collect();
+    let mut memo: HashMap<(usize, usize, bool, bool), i64> = HashMap::new();
+    digit_dp_go(0, 0, false, false, true, &digits, &mut memo)
+}
+
+fn digit_dp_go(
+    pos: usize,
+    rem: usize,       // value of the prefix mod 13
+    found: bool,       // "13" already seen in the prefix
+    prev_one: bool,    // previous digit was 1
+    tight: bool,       // prefix equals the bound so far
+    digits: &[u8],
+    memo: &mut HashMap<(usize, usize, bool, bool), i64>,
+) -> i64 {
+    if pos == digits.len() {
+        return i64::from(found && rem == 0);
+    }
+    let key = (pos, rem, found, prev_one);
+    if !tight {
+        if let Some(&v) = memo.get(&key) {
+            return v;
+        }
+    }
+    let limit = if tight { digits[pos] } else { 9 };
+    let mut total = 0i64;
+    for d in 0..=limit {
+        total += digit_dp_go(
+            pos + 1,
+            (rem * 10 + d as usize) % 13,
+            found || (prev_one && d == 3),
+            d == 1,
+            tight && d == limit,
+            digits,
+            memo,
+        );
+    }
+    if !tight {
+        memo.insert(key, total);
+    }
+    total
+}
+
+pub fn digit_dp() {
+    // Small bound: verify against a full scan.
+    let small = 100_000i64;
+    let dp_small = digit_dp_count(small);
+    let brute: i64 = (0..=small).filter(|&x| contains_13(x) && x % 13 == 0).count() as i64;
+
+    // Large bound: only the DP is fast enough.
+    let big = 987_654_321i64;
+    let dp_big = digit_dp_count(big);
+
+    println!("count x ≤ N with \"13\" in the digits and x ≡ 0 (mod 13)");
+    println!("  N = {small}: dp = {dp_small}, full scan = {brute}, match: {}", dp_small == brute);
+    println!("  N = {big}: dp = {dp_big}  (a full scan would check {} numbers)", big + 1);
+    println!("memo: (position, remainder mod 13, found \"13\", previous digit is 1) × tight");
+    println!("→ O(digits × 13 × 4 × 10) ≈ {} transitions vs O(N) scanning",
+        11 * 13 * 4 * 10);
 }

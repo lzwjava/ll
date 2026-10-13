@@ -4,9 +4,11 @@
 //! Names are matched ignoring case and dashes (`quicksort` == `quick-sort`).
 
 pub mod arrays;
+pub mod backtracking;
 pub mod crypto;
 pub mod dnc;
 pub mod dp;
+pub mod flow;
 pub mod geometry;
 pub mod graph;
 pub mod greedy;
@@ -55,6 +57,12 @@ pub const ALGORITHMS: &[Algorithm] = &[
         category: "Searching",
         desc: "Parametric search: min feasible value via a monotone predicate",
         run: searching::binary_search_on_answer,
+    },
+    Algorithm {
+        name: "ida-star",
+        category: "Searching",
+        desc: "Iterative-deepening A* solves the 8-puzzle in O(depth) memory",
+        run: searching::ida_star,
     },
     // ─── Array Techniques ───────────────────────────────────────────────────────
     Algorithm {
@@ -167,6 +175,37 @@ pub const ALGORITHMS: &[Algorithm] = &[
         desc: "Strongly connected components from one DFS (low-links)",
         run: graph::tarjan_scc,
     },
+    Algorithm {
+        name: "euler-path",
+        category: "Graph",
+        desc: "Visit every edge exactly once (Hierholzer circuit / trail)",
+        run: graph::euler_path,
+    },
+    Algorithm {
+        name: "bridges",
+        category: "Graph",
+        desc: "Cut edges & cut vertices via disc/low links",
+        run: graph::bridges,
+    },
+    Algorithm {
+        name: "two-sat",
+        category: "Graph",
+        desc: "2-SAT: implication graph + SCC + topological assignment",
+        run: graph::two_sat,
+    },
+    // ─── Network Flow ─────────────────────────────────────────────────────
+    Algorithm {
+        name: "max-flow",
+        category: "Network Flow",
+        desc: "Edmonds-Karp augmenting paths; verifies max-flow = min-cut",
+        run: flow::max_flow,
+    },
+    Algorithm {
+        name: "bipartite-matching",
+        category: "Network Flow",
+        desc: "Kuhn's augmenting-path matching, checked against brute force",
+        run: flow::bipartite_matching,
+    },
     // ─── Dynamic Programming ──────────────────────────────────────────────────
     Algorithm {
         name: "fibonacci",
@@ -222,6 +261,12 @@ pub const ALGORITHMS: &[Algorithm] = &[
         desc: "TSP over subsets — dp[mask][i] in O(2ⁿ·n²)",
         run: dp::bitmask_dp,
     },
+    Algorithm {
+        name: "digit-dp",
+        category: "Dynamic Programming",
+        desc: "Count digit strings with a mod-13 + substring constraint",
+        run: dp::digit_dp,
+    },
     // ─── Number Theory ────────────────────────────────────────────────────────
     Algorithm {
         name: "sieve",
@@ -234,6 +279,36 @@ pub const ALGORITHMS: &[Algorithm] = &[
         category: "Number Theory",
         desc: "Bézout ax + by = gcd → modular inverse, CRT building block",
         run: numbertheory::extended_gcd,
+    },
+    Algorithm {
+        name: "fast-exponentiation",
+        category: "Number Theory",
+        desc: "Binary powering a^e mod m in O(log e) multiplications",
+        run: numbertheory::fast_exponentiation,
+    },
+    Algorithm {
+        name: "chinese-remainder",
+        category: "Number Theory",
+        desc: "CRT: merge congruences x ≡ aᵢ (mod mᵢ) for coprime moduli",
+        run: numbertheory::chinese_remainder,
+    },
+    Algorithm {
+        name: "matrix-exponentiation",
+        category: "Number Theory",
+        desc: "Linear recurrences (fib(10⁶)) by matrix powering in O(log n)",
+        run: numbertheory::matrix_exponentiation,
+    },
+    Algorithm {
+        name: "discrete-log",
+        category: "Number Theory",
+        desc: "Baby-step giant-step: smallest x with gˣ ≡ h (mod p)",
+        run: numbertheory::discrete_log,
+    },
+    Algorithm {
+        name: "miller-rabin",
+        category: "Number Theory",
+        desc: "Deterministic Miller–Rabin primality for all 64-bit integers",
+        run: numbertheory::miller_rabin,
     },
     // ─── Cryptographic / Hashing ──────────────────────────────────────────────
     Algorithm {
@@ -360,6 +435,24 @@ pub const ALGORITHMS: &[Algorithm] = &[
         desc: "Z-array pattern matching — KMP's prefix trick, one array",
         run: strings::z_algorithm,
     },
+    Algorithm {
+        name: "manacher",
+        category: "String",
+        desc: "Longest palindromic substring in O(n) with mirrored radii",
+        run: strings::manacher,
+    },
+    Algorithm {
+        name: "aho-corasick",
+        category: "String",
+        desc: "Trie + failure links: all patterns in one text scan",
+        run: strings::aho_corasick,
+    },
+    Algorithm {
+        name: "suffix-array",
+        category: "String",
+        desc: "Sorted suffixes + LCP (prefix doubling, Kasai)",
+        run: strings::suffix_array,
+    },
     // ─── Greedy ───────────────────────────────────────────────────────────────
     Algorithm {
         name: "huffman",
@@ -385,6 +478,49 @@ pub const ALGORITHMS: &[Algorithm] = &[
         category: "Geometry",
         desc: "Andrew's monotone chain hull of 2-D points, O(n log n)",
         run: geometry::convex_hull,
+    },
+    Algorithm {
+        name: "segment-intersection",
+        category: "Geometry",
+        desc: "Do two segments touch? Orientation tests, all edge cases",
+        run: geometry::segment_intersection,
+    },
+    Algorithm {
+        name: "point-in-polygon",
+        category: "Geometry",
+        desc: "Ray casting (even-odd) vs winding number, boundary handling",
+        run: geometry::point_in_polygon,
+    },
+    Algorithm {
+        name: "closest-pair",
+        category: "Geometry",
+        desc: "Nearest 2-D points by divide & conquer in O(n log n)",
+        run: geometry::closest_pair,
+    },
+    Algorithm {
+        name: "rotating-calipers",
+        category: "Geometry",
+        desc: "Convex polygon diameter from antipodal pairs in O(h)",
+        run: geometry::rotating_calipers,
+    },
+    Algorithm {
+        name: "triangle-centers",
+        category: "Geometry",
+        desc: "Centroid, in-, circum-, orthocenter and the Euler line",
+        run: geometry::triangle_centers,
+    },
+    // ─── Backtracking ───────────────────────────────────────────────────────
+    Algorithm {
+        name: "n-queens",
+        category: "Backtracking",
+        desc: "Bitmask placement; counts all 724 solutions for n = 10",
+        run: backtracking::n_queens,
+    },
+    Algorithm {
+        name: "sudoku",
+        category: "Backtracking",
+        desc: "MRV backtracking solves a classic puzzle",
+        run: backtracking::sudoku,
     },
 ];
 

@@ -1,4 +1,6 @@
-//! String algorithms: KMP, Rabin-Karp, Boyer-Moore (Horspool variant).
+//! String algorithms: KMP, Rabin-Karp, Boyer-Moore (Horspool variant),
+//! Z-algorithm, Manacher (palindromes), Aho-Corasick (multi-pattern),
+//! suffix array + LCP.
 
 // ─── Knuth-Morris-Pratt ───────────────────────────────────────────────────────
 
@@ -220,4 +222,253 @@ fn bm_search(text: &str, pattern: &str, table: &[usize; 256]) -> Vec<usize> {
         }
     }
     hits
+}
+
+// ─── Manacher (longest palindromic substring) ──────────────────────────────────
+
+/// Returns `(start, length)` of a longest palindromic substring in O(n).
+fn longest_palindrome(s: &str) -> (usize, usize) {
+    let bytes = s.as_bytes();
+    // Transform "abc" → [0, '#', 'a', '#', 'b', '#', 'c', 1]: odd and even
+    // palindromes both become odd runs around one center. Distinct sentinels
+    // guarantee the expansion loop always stops at the borders.
+    let mut t = vec![0u8];
+    for &c in bytes {
+        t.push(b'#');
+        t.push(c);
+    }
+    t.push(b'#'); // mirror the leading '#' so both borders are symmetric
+    t.push(1);
+    let n = t.len();
+    let mut p = vec![0usize; n];
+    let (mut center, mut right) = (0usize, 0usize);
+    for i in 1..n - 1 {
+        if i < right {
+            p[i] = p[2 * center - i].min(right - i); // mirror across `center`
+        }
+        while i > p[i] && i + p[i] + 1 < n && t[i + p[i] + 1] == t[i - p[i] - 1] {
+            p[i] += 1;
+        }
+        if i + p[i] > right {
+            center = i;
+            right = i + p[i];
+        }
+    }
+    // p[i] = radius in the transformed string = length in the original string.
+    let best_i = (1..n - 1).max_by_key(|&i| p[i]).unwrap();
+    let best_len = p[best_i];
+    let left_t = best_i - best_len;
+    let first_letter_t = if left_t % 2 == 0 { left_t } else { left_t + 1 };
+    ((first_letter_t - 2) / 2, best_len)
+}
+
+fn brute_palindrome(s: &str) -> (usize, usize) {
+    let b = s.as_bytes();
+    let (mut bs, mut bl) = (0usize, 0usize);
+    for i in 0..b.len() {
+        for j in i..b.len() {
+            if j - i + 1 > bl && (i..=j).all(|k| b[k] == b[j - (k - i)]) {
+                bs = i;
+                bl = j - i + 1;
+            }
+        }
+    }
+    (bs, bl)
+}
+
+pub fn manacher() {
+    let mut all_ok = true;
+    for text in ["forgeeksskeegfor", "bananas", "cbbd", "abacabadabacaba"] {
+        let (start, len) = longest_palindrome(text);
+        let (_, blen) = brute_palindrome(text);
+        let ok = len == blen;
+        all_ok &= ok;
+        println!(
+            "  \"{text}\" → \"{}\" at {start} (len {len}), brute force len {blen}: {ok}",
+            &text[start..start + len]
+        );
+    }
+    println!("all lengths match the O(n²) scan: {all_ok}");
+    println!("the same expanding box as the Z-array, but centred on every position with a mirror");
+    println!("→ O(n) time, O(n) space; answers both odd- and even-length palindromes");
+}
+
+// ─── Aho-Corasick (multi-pattern matching) ─────────────────────────────────────
+
+/// Trie with failure links, flattened into a full transition table so matching
+/// never walks back up. `out[v]` lists every pattern that ends at `v`.
+fn build_aho(patterns: &[&str]) -> (Vec<[i32; 26]>, Vec<Vec<usize>>) {
+    let mut goto = vec![[-1i32; 26]];
+    let mut out: Vec<Vec<usize>> = vec![Vec::new()];
+    for (pid, pat) in patterns.iter().enumerate() {
+        let mut node = 0usize;
+        for &c in pat.as_bytes() {
+            let ci = (c - b'a') as usize;
+            if goto[node][ci] == -1 {
+                goto[node][ci] = goto.len() as i32;
+                goto.push([-1; 26]);
+                out.push(Vec::new());
+            }
+            node = goto[node][ci] as usize;
+        }
+        out[node].push(pid);
+    }
+    // BFS over depths: wire failure links, inherit their outputs, close the table.
+    let mut fail = vec![0usize; goto.len()];
+    let mut queue = std::collections::VecDeque::new();
+    for c in 0..26 {
+        let t = goto[0][c];
+        if t != -1 {
+            queue.push_back(t as usize);
+        } else {
+            goto[0][c] = 0; // root misses stay at the root
+        }
+    }
+    while let Some(u) = queue.pop_front() {
+        for c in 0..26 {
+            let t = goto[u][c];
+            if t != -1 {
+                let v = t as usize;
+                let f = goto[fail[u]][c];
+                fail[v] = f as usize;
+                let inherited = out[fail[v]].clone(); // e.g. "he" ends inside "she"
+                out[v].extend(inherited);
+                queue.push_back(v);
+            } else {
+                let f = goto[fail[u]][c];
+                goto[u][c] = f; // follow the failure link in O(1)
+            }
+        }
+    }
+    (goto, out)
+}
+
+fn ac_search(text: &str, patterns: &[&str], goto: &[[i32; 26]], out: &[Vec<usize>]) -> Vec<(usize, usize)> {
+    let mut hits = Vec::new();
+    let mut node = 0usize;
+    for (i, &c) in text.as_bytes().iter().enumerate() {
+        node = goto[node][(c - b'a') as usize] as usize;
+        for &pid in &out[node] {
+            hits.push((i + 1 - patterns[pid].len(), pid));
+        }
+    }
+    hits.sort_unstable();
+    hits
+}
+
+fn ac_naive(text: &str, patterns: &[&str]) -> Vec<(usize, usize)> {
+    let mut hits = Vec::new();
+    for (pid, p) in patterns.iter().enumerate() {
+        for i in 0..=text.len() - p.len() {
+            if &text[i..i + p.len()] == *p {
+                hits.push((i, pid));
+            }
+        }
+    }
+    hits.sort_unstable();
+    hits
+}
+
+pub fn aho_corasick() {
+    let patterns = ["he", "she", "his", "hers"];
+    let text = "ahishers";
+    let (goto, out) = build_aho(&patterns);
+    let hits = ac_search(text, &patterns, &goto, &out);
+    let naive = ac_naive(text, &patterns);
+
+    println!("patterns: {patterns:?}");
+    println!("text = \"{text}\"");
+    for (i, pid) in &hits {
+        let p = patterns[*pid];
+        println!("  \"{p}\" at index {i} (ends at {})", i + p.len());
+    }
+    println!("matches the naive per-pattern scan: {}", hits == naive);
+    println!("one pass over the text: goto[] resolves fail links in O(1) → O(text + matches);");
+    println!("{} separate KMP scans would re-read the text {} times — AC reads it once", patterns.len(), patterns.len());
+}
+
+// ─── Suffix array ──────────────────────────────────────────────────────────────
+
+/// Prefix doubling: rank suffixes by their first 2^k characters each round.
+fn build_suffix_array(s: &[u8]) -> Vec<usize> {
+    let n = s.len();
+    let mut sa: Vec<usize> = (0..n).collect();
+    let mut rank: Vec<i32> = s.iter().map(|&c| c as i32).collect();
+    let mut tmp = vec![0i32; n];
+    let mut k = 1usize;
+    loop {
+        sa.sort_by_key(|&i| (rank[i], if i + k < n { rank[i + k] } else { -1 }));
+        tmp[sa[0]] = 0;
+        for w in 1..n {
+            let (a, b) = (sa[w - 1], sa[w]);
+            let ka = (rank[a], if a + k < n { rank[a + k] } else { -1 });
+            let kb = (rank[b], if b + k < n { rank[b + k] } else { -1 });
+            tmp[b] = tmp[a] + i32::from(ka < kb);
+        }
+        std::mem::swap(&mut rank, &mut tmp);
+        if rank[sa[n - 1]] == (n - 1) as i32 {
+            break; // every rank is distinct — the order is settled
+        }
+        k *= 2;
+    }
+    sa
+}
+
+/// Kasai: lcp[i] = longest common prefix of suffixes sa[i], sa[i+1] in O(n).
+fn kasai(s: &[u8], sa: &[usize]) -> Vec<usize> {
+    let n = s.len();
+    let mut rank = vec![0usize; n];
+    for (i, &p) in sa.iter().enumerate() {
+        rank[p] = i;
+    }
+    let mut lcp = vec![0usize; n - 1];
+    let mut h = 0usize;
+    for i in 0..n {
+        let r = rank[i];
+        if r == n - 1 {
+            h = 0;
+            continue;
+        }
+        let j = sa[r + 1];
+        while i + h < n && j + h < n && s[i + h] == s[j + h] {
+            h += 1;
+        }
+        lcp[r] = h;
+        if h > 0 {
+            h -= 1; // the next suffix is at most one character shorter
+        }
+    }
+    lcp
+}
+
+pub fn suffix_array() {
+    let text = "banana";
+    let s = text.as_bytes();
+    let sa = build_suffix_array(s);
+    let lcp = kasai(s, &sa);
+
+    let mut naive: Vec<usize> = (0..s.len()).collect();
+    naive.sort_by(|&a, &b| s[a..].cmp(&s[b..]));
+    let naive_lcp: Vec<usize> = (0..sa.len() - 1)
+        .map(|i| {
+            let (a, b) = (&text[sa[i]..], &text[sa[i + 1]..]);
+            a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
+        })
+        .collect();
+
+    println!("text = \"{text}\"");
+    println!("  rank  sa  suffix          LCP with previous");
+    for (r, &i) in sa.iter().enumerate() {
+        let l = if r == 0 {
+            "-".to_string()
+        } else {
+            lcp[r - 1].to_string()
+        };
+        println!("  {r:>4} {i:>4}  {:<15} {l}", &text[i..]);
+    }
+    println!("matches a plain sort of all suffixes: {}", sa == naive);
+    println!("LCP matches direct comparison: {}", lcp == naive_lcp);
+    println!("prefix doubling re-ranks (i, i+k) pairs → O(n log² n) here (radix sort → O(n log n), SA-IS → O(n));");
+    println!("Kasai's counter never grows twice → O(n); together they power longest repeated");
+    println!("substring, substring indexing / search, and the Burrows–Wheeler transform");
 }

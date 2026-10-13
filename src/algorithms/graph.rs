@@ -1,5 +1,6 @@
 //! Graph algorithms: Dijkstra, Bellman-Ford, Floyd-Warshall, Kruskal, Prim,
-//! topological sort (Kahn), A* grid pathfinding.
+//! topological sort (Kahn), A* grid pathfinding, 0/1 BFS, Tarjan SCC,
+//! Euler path (Hierholzer), bridges & cut vertices, 2-SAT.
 
 use super::trees::Dsu;
 use std::cmp::Reverse;
@@ -522,4 +523,376 @@ fn tarjan(g: &[Vec<usize>]) -> Vec<Vec<usize>> {
         }
     }
     t.comps
+}
+
+// ─── Euler path (Hierholzer) ──────────────────────────────────────────────────
+
+/// Every vertex has even degree → Euler circuit.
+const EULER_CIRCUIT: &[(usize, usize)] = &[
+    (0, 1),
+    (1, 2),
+    (2, 0), // triangle {0,1,2}
+    (3, 4),
+    (4, 5),
+    (5, 3), // triangle {3,4,5}
+    (0, 3),
+    (1, 4),
+    (2, 5), // matching #1
+    (0, 5),
+    (1, 3),
+    (2, 4), // matching #2  → 4-regular, 12 edges
+];
+
+/// Same graph minus one edge → exactly two odd degrees → Euler trail.
+const EULER_TRAIL: &[(usize, usize)] = &[
+    (0, 1),
+    (1, 2),
+    (2, 0),
+    (3, 4),
+    (4, 5),
+    (5, 3),
+    (1, 4),
+    (2, 5),
+    (0, 5),
+    (1, 3),
+    (2, 4),
+];
+
+/// Hierholzer: start anywhere, keep walking on unused edges, splice leftover
+/// tours into the current path when you get stuck.
+fn hierholzer(n: usize, edges: &[(usize, usize)]) -> Option<Vec<usize>> {
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n]; // edge ids per vertex
+    for (id, &(u, v)) in edges.iter().enumerate() {
+        adj[u].push(id);
+        adj[v].push(id);
+    }
+    let mut deg = vec![0usize; n];
+    for &(u, v) in edges {
+        deg[u] += 1;
+        deg[v] += 1;
+    }
+    let odds: Vec<usize> = (0..n).filter(|&i| deg[i] % 2 == 1).collect();
+    if odds.len() > 2 {
+        return None; // Euler's theorem: at most two odd degrees
+    }
+    let start = odds.first().copied().unwrap_or(0);
+
+    let mut used = vec![false; edges.len()];
+    let mut stack = vec![start];
+    let mut path = Vec::new();
+    while let Some(&u) = stack.last() {
+        match adj[u].iter().position(|&e| !used[e]) {
+            Some(idx) => {
+                let e = adj[u][idx];
+                used[e] = true;
+                let (x, y) = edges[e];
+                stack.push(if x == u { y } else { x });
+            }
+            None => {
+                path.push(stack.pop().unwrap());
+            }
+        }
+    }
+    path.reverse();
+    (path.len() == edges.len() + 1).then_some(path) // covers every edge or bust
+}
+
+pub fn euler_path() {
+    let n = 6;
+    for (label, edges) in [
+        ("all degrees even → circuit", EULER_CIRCUIT),
+        ("exactly two odd degrees → trail", EULER_TRAIL),
+    ] {
+        let mut deg = vec![0usize; n];
+        for &(u, v) in edges {
+            deg[u] += 1;
+            deg[v] += 1;
+        }
+        let odds: Vec<usize> = (0..n).filter(|&i| deg[i] % 2 == 1).collect();
+        println!("{label}  ({} edges, degrees {deg:?}, odd = {odds:?})", edges.len());
+        match hierholzer(n, edges) {
+            Some(path) => {
+                let mut walked: Vec<(usize, usize)> = path
+                    .windows(2)
+                    .map(|w| (w[0].min(w[1]), w[0].max(w[1])))
+                    .collect();
+                let mut want: Vec<(usize, usize)> = edges
+                    .iter()
+                    .map(|&(u, v)| (u.min(v), u.max(v)))
+                    .collect();
+                walked.sort_unstable();
+                want.sort_unstable();
+                println!("  path = {path:?}");
+                println!(
+                    "  every edge used exactly once: {}, start = {}, end = {}",
+                    walked == want,
+                    path[0],
+                    path[path.len() - 1]
+                );
+            }
+            None => println!("  no Euler path exists"),
+        }
+    }
+    println!("Hierholzer merges leftover tours while walking → O(E) time, O(E) space;");
+    println!("Fleury (avoid cutting bridges) is the O(E²) version nobody should use");
+}
+
+// ─── Bridges & articulation points ────────────────────────────────────────────
+
+/// Three triangles glued together by two bridges.
+const CUT_GRAPH: &[(usize, usize)] = &[
+    (0, 1),
+    (1, 2),
+    (2, 0), // triangle A
+    (1, 3), // bridge
+    (3, 4),
+    (4, 5),
+    (5, 3), // triangle B
+    (4, 6), // bridge
+    (6, 7),
+    (7, 8),
+    (8, 6), // triangle C
+];
+
+/// Connected components of the graph after optionally deleting an edge/vertex.
+fn components(
+    n: usize,
+    edges: &[(usize, usize)],
+    skip_edge: Option<usize>,
+    skip_vertex: Option<usize>,
+) -> usize {
+    let mut g = vec![Vec::new(); n];
+    for (i, &(u, v)) in edges.iter().enumerate() {
+        if Some(i) == skip_edge || Some(u) == skip_vertex || Some(v) == skip_vertex {
+            continue;
+        }
+        g[u].push(v);
+        g[v].push(u);
+    }
+    let mut seen = vec![false; n];
+    let mut count = 0;
+    for s in 0..n {
+        if Some(s) == skip_vertex || seen[s] {
+            continue;
+        }
+        count += 1;
+        let mut stack = vec![s];
+        seen[s] = true;
+        while let Some(u) = stack.pop() {
+            for &v in &g[u] {
+                if !seen[v] {
+                    seen[v] = true;
+                    stack.push(v);
+                }
+            }
+        }
+    }
+    count
+}
+
+struct CutDfs<'a> {
+    g: &'a [Vec<usize>],
+    disc: Vec<usize>,
+    low: Vec<usize>,
+    time: usize,
+    bridges: Vec<(usize, usize)>,
+    cuts: Vec<bool>,
+}
+
+impl CutDfs<'_> {
+    fn visit(&mut self, u: usize, parent: usize) {
+        self.disc[u] = self.time;
+        self.low[u] = self.time;
+        self.time += 1;
+        let neigh = self.g[u].clone(); // clone: visit() needs &mut self
+        let mut children = 0;
+        for v in neigh {
+            if v == parent {
+                continue;
+            }
+            if self.disc[v] == usize::MAX {
+                children += 1;
+                self.visit(v, u);
+                self.low[u] = self.low[u].min(self.low[v]);
+                if self.low[v] > self.disc[u] {
+                    // no back edge from v's subtree reaches u or above → cut edge
+                    self.bridges.push((u.min(v), u.max(v)));
+                }
+                if self.low[v] >= self.disc[u] && parent != usize::MAX {
+                    self.cuts[u] = true;
+                }
+            } else {
+                self.low[u] = self.low[u].min(self.disc[v]); // back edge
+            }
+        }
+        if parent == usize::MAX && children > 1 {
+            self.cuts[u] = true; // root of the DFS tree
+        }
+    }
+}
+
+pub fn bridges() {
+    const N: usize = 9;
+    let base = components(N, CUT_GRAPH, None, None);
+
+    let mut g = vec![Vec::new(); N];
+    for &(u, v) in CUT_GRAPH {
+        g[u].push(v);
+        g[v].push(u);
+    }
+    let mut dfs = CutDfs {
+        g: &g,
+        disc: vec![usize::MAX; N],
+        low: vec![0; N],
+        time: 0,
+        bridges: Vec::new(),
+        cuts: vec![false; N],
+    };
+    dfs.visit(0, usize::MAX);
+    let mut found_bridges = dfs.bridges.clone();
+    found_bridges.sort_unstable();
+    let found_cuts: Vec<usize> = (0..N).filter(|&v| dfs.cuts[v]).collect();
+
+    // Independent check: delete each edge / vertex and recount components.
+    let mut bf_bridges: Vec<(usize, usize)> = (0..CUT_GRAPH.len())
+        .filter(|&e| components(N, CUT_GRAPH, Some(e), None) > base)
+        .map(|e| {
+            let (u, v) = CUT_GRAPH[e];
+            (u.min(v), u.max(v))
+        })
+        .collect();
+    bf_bridges.sort_unstable();
+    let bf_cuts: Vec<usize> = (0..N)
+        .filter(|&v| components(N, CUT_GRAPH, None, Some(v)) > base)
+        .collect();
+
+    println!("graph: three triangles joined by two bridges ({N} nodes, {} edges)", CUT_GRAPH.len());
+    println!("low-link pass → bridges: {found_bridges:?}");
+    println!("low-link pass → cut vertices: {found_cuts:?}");
+    println!("brute force (delete & recount) → bridges match: {}, cuts match: {}",
+        found_bridges == bf_bridges, found_cuts == bf_cuts);
+    println!("components before any deletion = {base}");
+    println!("one DFS maintaining disc/low (same idea as Tarjan's SCC) → O(V+E);");
+    println!("e = (u,v) is a bridge iff low[v] > disc[u]; u is a cut vertex iff some");
+    println!("child has low[v] ≥ disc[u] (or the root has ≥ 2 children)");
+}
+
+// ─── 2-SAT ─────────────────────────────────────────────────────────────────────
+
+/// Literal encoding: `2*i` = x_i, `2*i+1` = ¬x_i. Clause (a ∨ b) becomes
+/// the two implications ¬a → b and ¬b → a.
+fn implication_graph(n: usize, clauses: &[(usize, usize)]) -> Vec<Vec<usize>> {
+    let mut g = vec![Vec::new(); 2 * n];
+    for &(a, b) in clauses {
+        g[a ^ 1].push(b);
+        g[b ^ 1].push(a);
+    }
+    g
+}
+
+/// Returns a satisfying assignment, or `None` when x and ¬x share an SCC.
+fn solve_two_sat(n: usize, clauses: &[(usize, usize)]) -> Option<Vec<bool>> {
+    let g = implication_graph(n, clauses);
+    let comps = tarjan(&g);
+    let mut owner = vec![0usize; 2 * n];
+    for (id, c) in comps.iter().enumerate() {
+        for &v in c {
+            owner[v] = id;
+        }
+    }
+    for i in 0..n {
+        if owner[2 * i] == owner[2 * i + 1] {
+            return None; // x ⇒ ¬x ⇒ x: the variable is forced both ways
+        }
+    }
+
+    // Topological order of the condensation DAG (Kahn over components).
+    let ncomp = comps.len();
+    let mut out_edges: Vec<Vec<usize>> = vec![Vec::new(); ncomp];
+    let mut indeg = vec![0usize; ncomp];
+    for u in 0..g.len() {
+        for &v in &g[u] {
+            if owner[u] != owner[v] && !out_edges[owner[u]].contains(&owner[v]) {
+                out_edges[owner[u]].push(owner[v]);
+                indeg[owner[v]] += 1;
+            }
+        }
+    }
+    let mut topo = Vec::with_capacity(ncomp);
+    let mut queue: std::collections::VecDeque<usize> =
+        (0..ncomp).filter(|&c| indeg[c] == 0).collect();
+    while let Some(c) = queue.pop_front() {
+        topo.push(c);
+        for &d in &out_edges[c] {
+            indeg[d] -= 1;
+            if indeg[d] == 0 {
+                queue.push_back(d);
+            }
+        }
+    }
+    let mut pos = vec![0usize; ncomp];
+    for (i, &c) in topo.iter().enumerate() {
+        pos[c] = i;
+    }
+
+    // A literal must be true only after everything that implies it: x is true
+    // exactly when ¬x's component precedes x's component.
+    Some(
+        (0..n)
+            .map(|i| pos[owner[2 * i]] > pos[owner[2 * i + 1]])
+            .collect(),
+    )
+}
+
+fn clauses_hold(val: &[bool], clauses: &[(usize, usize)]) -> bool {
+    clauses.iter().all(|&(a, b)| (a & 1 == 0) == val[a >> 1] || (b & 1 == 0) == val[b >> 1])
+}
+
+fn satisfiable_brute(n: usize, clauses: &[(usize, usize)]) -> bool {
+    (0..1u32 << n).any(|mask| {
+        let val: Vec<bool> = (0..n).map(|i| mask & (1 << i) != 0).collect();
+        clauses_hold(&val, clauses)
+    })
+}
+
+pub fn two_sat() {
+    // Instance 1: 4 variables, 8 clauses — satisfiable.
+    let n = 4;
+    let clauses: &[(usize, usize)] = &[
+        (0, 2),  // x0 ∨ x1
+        (1, 4),  // ¬x0 ∨ x2
+        (3, 7),  // ¬x1 ∨ ¬x3
+        (4, 6),  // x2 ∨ x3
+        (5, 3),  // ¬x2 ∨ ¬x1
+        (0, 7),  // x0 ∨ ¬x3
+        (2, 4),  // x1 ∨ x2
+        (1, 3),  // ¬x0 ∨ ¬x1
+    ];
+    println!("instance 1: {n} variables (x0..x{}), {} clauses", n - 1, clauses.len());
+    match solve_two_sat(n, clauses) {
+        Some(val) => {
+            println!("  assignment = {val:?} (true = literal is x_i)");
+            println!("  every clause satisfied: {}", clauses_hold(&val, clauses));
+            println!("  brute force over 2^{n} = {} assignments finds one: {}",
+                1 << n, satisfiable_brute(n, clauses));
+        }
+        None => println!("  reported UNSATISFIABLE"),
+    }
+
+    // Instance 2: the four clauses of (x0 ∧ ¬x0) style contradiction.
+    let n2 = 2;
+    let clauses2: &[(usize, usize)] = &[
+        (0, 2), // x0 ∨ x1
+        (1, 2), // ¬x0 ∨ x1
+        (0, 3), // x0 ∨ ¬x1
+        (1, 3), // ¬x0 ∨ ¬x1
+    ];
+    println!("instance 2: {n2} variables, {} contradictory clauses", clauses2.len());
+    match solve_two_sat(n2, clauses2) {
+        Some(val) => println!("  assignment = {val:?} (unexpected)"),
+        None => println!("  UNSATISFIABLE — some x_i shares its SCC with ¬x_i"),
+    }
+    println!("  brute force agrees: satisfiable = {}", satisfiable_brute(n2, clauses2));
+    println!("build 2 implication graphs, run SCC, read the topological order → O(V+E);");
+    println!("SAT without this trick would be exponential — 2-SAT is the easy half of SAT");
 }
