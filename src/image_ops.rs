@@ -75,14 +75,14 @@ fn usage() {
 
 fn list() {
     println!("Inspect");
-    println!("  {:<36} {}", "info <file>...", "format, size, color, file size (--json)");
+    println!("  {:<36} format, size, color, file size (--json)", "info <file>...");
     println!();
     println!("Files & tools");
-    println!("  {:<36} {}", "slice <in> <prefix>", "--cols N --rows N | --tile WxH");
-    println!("  {:<36} {}", "montage <in...> --out <sheet>", "--cols N --gap PX --thumb WxH");
-    println!("  {:<36} {}", "convert <in> <out>", "--out-dir DIR, --format, --quality");
-    println!("  {:<36} {}", "view <file>", "terminal preview (--max-width, --background)");
-    println!("  {:<36} {}", "apply <in> <out> <op:spec>...", "chain operators, e.g. crop:400x300+0+0");
+    println!("  {:<36} --cols N --rows N | --tile WxH", "slice <in> <prefix>");
+    println!("  {:<36} --cols N --gap PX --thumb WxH", "montage <in...> --out <sheet>");
+    println!("  {:<36} --out-dir DIR, --format, --quality", "convert <in> <out>");
+    println!("  {:<36} terminal preview (--max-width, --background)", "view <file>");
+    println!("  {:<36} chain operators, e.g. crop:400x300+0+0", "apply <in> <out> <op:spec>...");
     println!();
     println!("Pixel operations (each is also an 'apply' operator):");
     let mut group = "";
@@ -92,7 +92,7 @@ fn list() {
             println!("  {group}");
         }
         let desc = find_op(c.name).map(|o| o.desc).unwrap_or("");
-        println!("    {:<46} {}", c.usage, desc);
+        println!("    {:<58} {}", c.usage, desc);
     }
     println!();
     println!("Operator spec syntax (after 'op:' inside apply):");
@@ -139,7 +139,9 @@ fn parse_opts(args: &[String], value_flags: &[&str], bool_flags: &[&str]) -> io:
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
-        if a.starts_with('-') && a.len() > 1 {
+        // Negative numbers (e.g. `brightness in out -30`) are positional values,
+        // not flags — flag values themselves are consumed before this check.
+        if a.starts_with('-') && a.len() > 1 && a.parse::<f64>().is_err() {
             let (name, inline) = match a.find('=') {
                 Some(p) => (&a[..p], Some(a[p + 1..].to_string())),
                 None => (a.as_str(), None),
@@ -193,6 +195,11 @@ fn pos<'a>(o: &'a Opts, i: usize, what: &str) -> io::Result<&'a str> {
         .get(i)
         .map(String::as_str)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("missing {what}")))
+}
+
+/// A flag value, falling back to the first positional argument after `<out>`.
+fn arg_or<'a>(o: &'a Opts, names: &[&str], idx: usize) -> Option<&'a str> {
+    o.get(names).or_else(|| o.pos.get(idx).map(String::as_str))
 }
 
 fn parse_f64(s: &str, what: &str) -> io::Result<f64> {
@@ -458,6 +465,7 @@ fn run_cmd(c: &'static Cmd, args: &[String]) -> io::Result<()> {
         println!("  {}", op.desc);
         println!();
         println!("  Common: --quality N (jpeg), --format NAME, --background COLOR (flatten alpha)");
+        println!("  Positional shortcut: ll image <op> <in> <out> <arg> (flags are optional)");
         return Ok(());
     }
 
@@ -492,11 +500,13 @@ fn b_none(_: &Opts) -> io::Result<String> {
 }
 
 fn b_value(o: &Opts) -> io::Result<String> {
-    req(o, &["--value", "-v"], "missing --value (e.g. -v 30)").map(str::to_string)
+    arg_or(o, &["--value", "-v"], 2)
+        .map(str::to_string)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing --value (e.g. -v 30)"))
 }
 
 fn b_crop(o: &Opts) -> io::Result<String> {
-    if let Some(g) = o.get(&["--geometry", "-g"]) {
+    if let Some(g) = arg_or(o, &["--geometry", "-g"], 2) {
         return Ok(g.to_string());
     }
     let w = req(o, &["--width", "-w"], "crop needs -g WxH+X+Y (or -w/-h)")?;
@@ -511,7 +521,10 @@ fn b_resize(o: &Opts) -> io::Result<String> {
         format!("{}%", p.trim().trim_end_matches('%'))
     } else {
         match (o.get(&["--width", "-w"]), o.get(&["--height", "-h"])) {
-            (None, None) => return err("resize needs -p PERCENT, -w WIDTH or -h HEIGHT"),
+            (None, None) => match o.pos.get(2) {
+                Some(g) => g.clone(),
+                None => return err("resize needs -p PERCENT, -w WIDTH, -h HEIGHT or a size (800x600)"),
+            },
             (Some(w), None) => format!("{w}x_"),
             (None, Some(h)) => format!("_{h}"),
             (Some(w), Some(h)) => format!("{w}x{h}"),
@@ -523,11 +536,15 @@ fn b_resize(o: &Opts) -> io::Result<String> {
 }
 
 fn b_thumbnail(o: &Opts) -> io::Result<String> {
-    req(o, &["--size", "-s"], "thumbnail needs -s N|WxH (e.g. -s 256)").map(str::to_string)
+    arg_or(o, &["--size", "-s"], 2)
+        .map(str::to_string)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "thumbnail needs -s N|WxH (e.g. -s 256)"))
 }
 
 fn b_rotate(o: &Opts) -> io::Result<String> {
-    let a = req(o, &["--angle", "-a"], "rotate needs -a DEGREES (e.g. -a 90)")?;
+    let a = arg_or(o, &["--angle", "-a"], 2).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "rotate needs -a DEGREES (e.g. -a 90)")
+    })?;
     match o.get(&["--background", "-b"]) {
         Some(bg) if !bg.trim().is_empty() => Ok(format!("{a}:{bg}")),
         _ => Ok(a.to_string()),
@@ -535,7 +552,7 @@ fn b_rotate(o: &Opts) -> io::Result<String> {
 }
 
 fn b_flip(o: &Opts) -> io::Result<String> {
-    if let Some(d) = o.get(&["--direction", "-d"]) {
+    if let Some(d) = arg_or(o, &["--direction", "-d"], 2) {
         return Ok(d.to_string());
     }
     let both = o.has(&["--both"]);
@@ -552,61 +569,75 @@ fn b_flip(o: &Opts) -> io::Result<String> {
 fn b_pad(o: &Opts) -> io::Result<String> {
     let w = o.get(&["--width", "-w"]);
     let h = o.get(&["--height", "-h"]);
-    if w.is_none() && h.is_none() {
-        return err("pad needs -w WIDTH and/or -h HEIGHT");
-    }
+    let geom = if w.is_none() && h.is_none() {
+        match o.pos.get(2) {
+            Some(g) => g.clone(),
+            None => return err("pad needs -w WIDTH and/or -h HEIGHT (or a size like 1000x800)"),
+        }
+    } else {
+        format!("{}x{}", w.unwrap_or("_"), h.unwrap_or("_"))
+    };
     let color = o.get(&["--color", "-c"]).unwrap_or("white");
     let gravity = o.get(&["--gravity"]).unwrap_or("center");
-    Ok(format!(
-        "{}x{}:{color}:{gravity}",
-        w.unwrap_or("_"),
-        h.unwrap_or("_")
-    ))
+    Ok(format!("{geom}:{color}:{gravity}"))
 }
 
 fn b_border(o: &Opts) -> io::Result<String> {
-    let w = req(o, &["--width", "-w"], "border needs -w PX (e.g. -w 10)")?;
+    let w = arg_or(o, &["--width", "-w"], 2).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "border needs -w PX (e.g. -w 10)")
+    })?;
     let color = o.get(&["--color", "-c"]).unwrap_or("black");
     Ok(format!("{w}:{color}"))
 }
 
 fn b_trim(o: &Opts) -> io::Result<String> {
+    let no_flags = o.get(&["--color", "-c"]).is_none() && o.get(&["--tolerance"]).is_none();
+    if let Some(spec) = o.pos.get(2).filter(|_| no_flags) {
+        return Ok(spec.clone());
+    }
     let color = o.get(&["--color", "-c"]).unwrap_or("auto");
     let tol = o.get(&["--tolerance"]).unwrap_or("10");
     Ok(format!("{color}:{tol}"))
 }
 
 fn b_opacity(o: &Opts) -> io::Result<String> {
-    req(o, &["--percent", "-p", "--value", "-v"], "opacity needs -p PERCENT (0..100)")
+    arg_or(o, &["--percent", "-p", "--value", "-v"], 2)
         .map(str::to_string)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "opacity needs -p PERCENT (0..100)"))
 }
 
 fn b_levels(o: &Opts) -> io::Result<String> {
-    req(o, &["--levels", "-l"], "posterize needs -l LEVELS (>= 2)").map(str::to_string)
+    arg_or(o, &["--levels", "-l"], 2)
+        .map(str::to_string)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "posterize needs -l LEVELS (>= 2)"))
 }
 
 fn b_blur(o: &Opts) -> io::Result<String> {
-    let sigma = o.get(&["--sigma", "-s"]).unwrap_or("2");
+    let sigma = arg_or(o, &["--sigma", "-s"], 2).unwrap_or("2");
     let fast = if o.has(&["--fast"]) { ":fast" } else { "" };
     Ok(format!("{sigma}{fast}"))
 }
 
 fn b_sharpen(o: &Opts) -> io::Result<String> {
+    let no_flags = o.get(&["--sigma", "-s"]).is_none() && o.get(&["--threshold", "-t"]).is_none();
+    if let Some(spec) = o.pos.get(2).filter(|_| no_flags) {
+        return Ok(spec.clone());
+    }
     let sigma = o.get(&["--sigma", "-s"]).unwrap_or("2");
     let threshold = o.get(&["--threshold", "-t"]).unwrap_or("3");
     Ok(format!("{sigma}:{threshold}"))
 }
 
 fn b_pixelate(o: &Opts) -> io::Result<String> {
-    Ok(o.get(&["--size", "-s"]).unwrap_or("16").to_string())
+    Ok(arg_or(o, &["--size", "-s"], 2).unwrap_or("16").to_string())
 }
 
 fn b_grain(o: &Opts) -> io::Result<String> {
-    Ok(o.get(&["--amount", "-a"]).unwrap_or("40").to_string())
+    Ok(arg_or(o, &["--amount", "-a"], 2).unwrap_or("40").to_string())
 }
 
 fn b_emboss(o: &Opts) -> io::Result<String> {
-    Ok(o.get(&["--bias"]).unwrap_or("128").to_string())
+    Ok(arg_or(o, &["--bias"], 2).unwrap_or("128").to_string())
 }
 
 // ─── Multi-file / tool commands ──────────────────────────────────────────────
@@ -658,8 +689,7 @@ fn cmd_info(args: &[String]) -> io::Result<()> {
     }
 
     if json_mode {
-        let text = serde_json::to_string_pretty(&objects)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        let text = serde_json::to_string_pretty(&objects).map_err(io::Error::other)?;
         println!("{text}");
     }
     Ok(())
@@ -702,10 +732,7 @@ fn fmt_bytes(b: u64) -> String {
 }
 
 fn cmd_slice(args: &[String]) -> io::Result<()> {
-    let vals = merge(
-        &["--cols", "--rows", "--tile"],
-        &SAVE_VALS,
-    );
+    let vals = merge(&["--cols", "--rows", "--tile"], SAVE_VALS);
     let o = parse_opts(args, &vals, &[])?;
     let input = pos(&o, 0, "input file")?;
     let img = read_image(input)?;
@@ -785,22 +812,33 @@ fn cmd_slice(args: &[String]) -> io::Result<()> {
 }
 
 fn tile_path(prefix: &str, row: u32, col: u32, ext: &str) -> String {
-    let base = if prefix.contains("{r}") || prefix.contains("{c}") {
-        prefix
-            .replace("{r}", &row.to_string())
-            .replace("{c}", &col.to_string())
-    } else {
-        format!("{prefix}-{row}-{col}")
+    // `prefix` may carry its own image extension: "tiles/x.jpg" -> "tiles/x-0-1.jpg".
+    let (base, ext) = match Path::new(prefix).extension() {
+        Some(e) if ImageFormat::from_extension(e).is_some() => {
+            let e = e.to_string_lossy().into_owned();
+            let path = Path::new(prefix);
+            let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned());
+            let dir = path.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+            let base = match stem {
+                Some(s) if dir.is_empty() => s,
+                Some(s) => format!("{dir}/{s}"),
+                None => prefix.to_string(),
+            };
+            (base, e)
+        }
+        _ => (prefix.to_string(), ext.to_string()),
     };
-    if Path::new(&base).extension().is_some() {
-        base
+
+    let name = if base.contains("{r}") || base.contains("{c}") {
+        base.replace("{r}", &row.to_string()).replace("{c}", &col.to_string())
     } else {
-        format!("{base}.{ext}")
-    }
+        format!("{base}-{row}-{col}")
+    };
+    format!("{name}.{ext}")
 }
 
 fn cmd_montage(args: &[String]) -> io::Result<()> {
-    let vals = merge(&["--out", "-o", "--cols", "--gap", "--thumb"], &SAVE_VALS);
+    let vals = merge(&["--out", "-o", "--cols", "--gap", "--thumb"], SAVE_VALS);
     let o = parse_opts(args, &vals, &[])?;
     let output = req(&o, &["--out", "-o"], "montage needs --out <sheet file>")?.to_string();
     let inputs = expand_inputs(&o.pos)?;
@@ -851,7 +889,7 @@ fn cmd_montage(args: &[String]) -> io::Result<()> {
 }
 
 fn cmd_convert(args: &[String]) -> io::Result<()> {
-    let vals = merge(&["--out-dir"], &SAVE_VALS);
+    let vals = merge(&["--out-dir"], SAVE_VALS);
     let o = parse_opts(args, &vals, &[])?;
     if o.pos.is_empty() {
         return err("usage: ll image convert <in> <out>   |   ll image convert <in...> --out-dir DIR");
@@ -899,7 +937,7 @@ fn cmd_convert(args: &[String]) -> io::Result<()> {
 }
 
 fn cmd_view(args: &[String]) -> io::Result<()> {
-    let vals = merge(&["--max-width", "--max-height"], &SAVE_VALS);
+    let vals = merge(&["--max-width", "--max-height"], SAVE_VALS);
     let o = parse_opts(args, &vals, &["--nearest", "--upscale"])?;
     let input = pos(&o, 0, "input file")?;
     let img = read_image(input)?;
@@ -943,7 +981,7 @@ fn cmd_view(args: &[String]) -> io::Result<()> {
     let flat = flatten(&shown, bg);
     let buf = flat.to_rgba8();
 
-    println!("{input}  {w}x{h}  ->  shown {sw}x{sh} (ESC [38;2;r;g;b truecolor, ▀ half blocks)");
+    println!("{input}  {w}x{h}  ->  shown {sw}x{sh}  (truecolor ANSI preview, ▀ half blocks)");
     let mut line = String::with_capacity(sw as usize * 24 + 8);
     for y in (0..sh).step_by(2) {
         line.clear();
@@ -1063,7 +1101,11 @@ impl Save {
     }
 
     fn write(&self, img: &DynamicImage, path: &str) -> io::Result<()> {
-        let fmt = match &self.format {
+        if let Some(parent) = Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).map_err(|e| {
+                io::Error::new(e.kind(), format!("cannot create directory '{}': {e}", parent.display()))
+            })?;
+        }        let fmt = match &self.format {
             Some(f) => parse_format(f)?,
             None => ImageFormat::from_path(path).map_err(|_| {
                 io::Error::new(
@@ -1089,7 +1131,7 @@ impl Save {
             (ImageFormat::Jpeg, Some(q)) => src.write_with_encoder(JpegEncoder::new_with_quality(file, q)),
             _ => src.write_to(file, fmt),
         };
-        result.map_err(|e| io::Error::new(io::ErrorKind::Other, format!("failed to write '{path}': {e}")))
+        result.map_err(|e| io::Error::other(format!("failed to write '{path}': {e}")))
     }
 }
 
@@ -1275,11 +1317,15 @@ fn split_geometry(spec: &str) -> io::Result<(String, String, String, String)> {
     ))
 }
 
-/// Split `WxH`; a missing `x` means height-only-empty (width only).
+/// Split `WxH`. A missing `x` means width only (`500` == `500x_`), while a
+/// leading `_` marks an empty width (`_270`).
 fn split_wh(spec: &str) -> io::Result<(String, String)> {
-    match spec.split_once('x') {
+    if let Some(rest) = spec.trim().strip_prefix('_') {
+        return Ok(("_".into(), rest.to_string()));
+    }
+    match spec.trim().split_once('x') {
         Some((w, h)) => Ok((w.to_string(), h.to_string())),
-        None => Ok((spec.to_string(), String::new())),
+        None => Ok((spec.trim().to_string(), String::new())),
     }
 }
 
@@ -1402,7 +1448,7 @@ static OPS: &[Op] = &[
     Op { name: "sepia", spec: "", desc: "Warm vintage tone", run: op_sepia },
     Op { name: "brightness", spec: "-255..255", desc: "Linear brightness offset", run: op_brightness },
     Op { name: "contrast", spec: "-100..100", desc: "Percent contrast", run: op_contrast },
-    Op { name: "saturate", spec: "-100..300", desc: "Color saturation percent (0 = gray)", run: op_saturate },
+    Op { name: "saturate", spec: "-100..300", desc: "Saturation: -100 = gray, 0 = keep, 200 = double", run: op_saturate },
     Op { name: "hue", spec: "-180..180", desc: "Rotate the hue wheel", run: op_hue },
     Op { name: "opacity", spec: "0..100", desc: "Scale the alpha channel (fade)", run: op_opacity },
     Op { name: "posterize", spec: "levels>=2", desc: "Quantize channels to N levels", run: op_posterize },
@@ -1502,10 +1548,15 @@ fn op_thumbnail(img: DynamicImage, spec: &str) -> io::Result<DynamicImage> {
     let (wt, ht) = split_wh(g)?;
     let w_active = !wt.is_empty() && wt != "_";
     let h_active = !ht.is_empty() && ht != "_";
+    // Never enlarge: clamp the fit-box to the current size (ImageMagick -thumbnail style).
+    let (bw, bh) = (
+        if w_active { resolve_len(&wt, img.width())?.min(img.width()) } else { img.width() },
+        if h_active { resolve_len(&ht, img.height())?.min(img.height()) } else { img.height() },
+    );
     match (w_active, h_active) {
-        (true, true) => Ok(img.thumbnail(resolve_len(&wt, img.width())?, resolve_len(&ht, img.height())?)),
-        (true, false) => Ok(img.thumbnail(resolve_len(&wt, img.width())?, img.height())),
-        (false, true) => Ok(img.thumbnail(img.width(), resolve_len(&ht, img.height())?)),
+        (true, true) => Ok(img.thumbnail(bw, bh)),
+        (true, false) => Ok(img.thumbnail(bw, img.height())),
+        (false, true) => Ok(img.thumbnail(img.width(), bh)),
         (false, false) => err("thumbnail: empty box"),
     }
 }
@@ -1662,7 +1713,7 @@ fn op_saturate(img: DynamicImage, spec: &str) -> io::Result<DynamicImage> {
         return err("saturate: missing percent (-100..300)");
     }
     let pct = parse_f64(v, "saturate")?;
-    let f = 1.0 + pct as f32 / 100.0;
+    let f = (1.0 + pct as f32 / 100.0).max(0.0);
     Ok(map_rgb(&img, |c| {
         let l = luma(c);
         [
@@ -1756,7 +1807,7 @@ fn grain_delta(x: u32, y: u32, ch: u32) -> f32 {
     let mut n = x
         .wrapping_mul(374_761_393)
         ^ y.wrapping_mul(668_265_263)
-        ^ ch.wrapping_mul(127_412_6177);
+        ^ ch.wrapping_mul(1_274_126_177);
     n = (n ^ (n >> 13)).wrapping_mul(1_274_126_177);
     let v = (n ^ (n >> 16)) % 2001; // 0..2000
     (v as f32 - 1000.0) / 1000.0 // -1.0..1.0
@@ -1956,4 +2007,226 @@ fn op_trim(img: DynamicImage, spec: &str) -> io::Result<DynamicImage> {
         return Ok(img); // uniform image, nothing to trim
     }
     Ok(img.crop_imm(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flat(w: u32, h: u32) -> DynamicImage {
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(w, h, Rgba([10, 20, 30, 255])))
+    }
+
+    // ── geometry ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn splits_geometry_forms() {
+        assert_eq!(split_geometry("400x300+50+50").unwrap(), ("400".into(), "300".into(), "+50".into(), "+50".into()));
+        assert_eq!(split_geometry("50%x50%").unwrap(), ("50%".into(), "50%".into(), String::new(), String::new()));
+        assert_eq!(split_geometry("200x200-10-10").unwrap(), ("200".into(), "200".into(), "-10".into(), "-10".into()));
+        assert_eq!(split_geometry("100x80+10-20").unwrap(), ("100".into(), "80".into(), "+10".into(), "-20".into()));
+        assert!(split_geometry("nonsense").is_err());
+        assert!(split_geometry("x300").is_err());
+    }
+
+    #[test]
+    fn resolves_lengths_and_offsets() {
+        assert_eq!(resolve_len("50%", 700).unwrap(), 350);
+        assert_eq!(resolve_len("120", 700).unwrap(), 120);
+        assert!(resolve_len("0", 700).is_err());
+        // ImageMagick style: negative offsets count from the far edge
+        assert_eq!(resolve_off("-10", 700, 200).unwrap(), 490);
+        assert_eq!(resolve_off("+10", 700, 200).unwrap(), 10);
+        assert_eq!(resolve_off("+10%", 700, 200).unwrap(), 70);
+        assert_eq!(resolve_off("", 700, 200).unwrap(), 0);
+    }
+
+    // ── colors & formats ────────────────────────────────────────────────────
+
+    #[test]
+    fn parses_colors() {
+        assert_eq!(parse_color("#ffcc00").unwrap(), Rgba([255, 204, 0, 255]));
+        assert_eq!(parse_color("#abc").unwrap(), Rgba([170, 187, 204, 255]));
+        assert_eq!(parse_color("#11223344").unwrap(), Rgba([0x11, 0x22, 0x33, 0x44]));
+        assert_eq!(parse_color("red").unwrap(), Rgba([255, 0, 0, 255]));
+        assert_eq!(parse_color("transparent").unwrap(), Rgba([0, 0, 0, 0]));
+        assert_eq!(parse_color("10,20,30").unwrap(), Rgba([10, 20, 30, 255]));
+        assert_eq!(parse_color("10, 20, 30, 40").unwrap(), Rgba([10, 20, 30, 40]));
+        assert!(parse_color("not-a-color").is_err());
+        assert!(parse_color("300,0,0").is_err());
+    }
+
+    #[test]
+    fn parses_formats() {
+        assert_eq!(parse_format("JPG").unwrap(), ImageFormat::Jpeg);
+        assert_eq!(parse_format("jpeg").unwrap(), ImageFormat::Jpeg);
+        assert_eq!(parse_format("tif").unwrap(), ImageFormat::Tiff);
+        assert!(parse_format("bmp").is_ok());
+        assert!(parse_format("docx").is_err());
+        assert_eq!(format_extension(ImageFormat::Jpeg).unwrap(), "jpg");
+    }
+
+    // ── names ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn resolves_operator_names() {
+        assert_eq!(find_op("gray").unwrap().name, "grayscale");
+        assert_eq!(find_op("Grey-Scale").unwrap().name, "grayscale");
+        assert_eq!(find_op("MOSAIC").unwrap().name, "pixelate");
+        assert!(find_op("crop").is_some());
+        assert!(find_op("definitely-not-an-op").is_none());
+        assert!(find_cmd("Crop").is_some());
+    }
+
+    #[test]
+    fn builds_tile_paths() {
+        assert_eq!(tile_path("part", 0, 1, "png"), "part-0-1.png");
+        assert_eq!(tile_path("out/{r}_{c}", 1, 2, "png"), "out/1_2.png");
+        // an image extension on the prefix wins over the default one
+        assert_eq!(tile_path("tiles/x.jpg", 3, 4, "png"), "tiles/x-3-4.jpg");
+    }
+
+    #[test]
+    fn computes_aspect_ratio() {
+        assert_eq!(aspect_str(700, 540), "35:27");
+        assert_eq!(aspect_str(1920, 1080), "16:9");
+        assert!(aspect_str(10_000, 3).contains(":1"));
+    }
+
+    // ── operators ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn crops_with_pixels_and_percentages() {
+        let out = op_crop(flat(700, 540), "100x50+10+10").unwrap();
+        assert_eq!((out.width(), out.height()), (100, 50));
+        let out = op_crop(flat(700, 540), "50%x50%").unwrap();
+        assert_eq!((out.width(), out.height()), (350, 270));
+        // -10-10 counts from the right/bottom edge
+        let out = op_crop(flat(700, 540), "200x200-10-10").unwrap();
+        assert_eq!((out.width(), out.height()), (200, 200));
+        // oversized crops are clamped instead of failing
+        let out = op_crop(flat(700, 540), "9999x9999+0+0").unwrap();
+        assert_eq!((out.width(), out.height()), (700, 540));
+        assert!(op_crop(flat(700, 540), "100").is_err());
+    }
+
+    #[test]
+    fn resizes_in_every_mode() {
+        let out = op_resize(flat(700, 540), "50%").unwrap();
+        assert_eq!((out.width(), out.height()), (350, 270));
+        let out = op_resize(flat(700, 540), "320x_").unwrap();
+        assert_eq!(out.width(), 320);
+        assert_eq!(out.height(), 247); // aspect preserved
+        let out = op_resize(flat(700, 540), "_270").unwrap();
+        assert_eq!((out.width(), out.height()), (350, 270));
+        let out = op_resize(flat(700, 540), "400x400:nearest:stretch").unwrap();
+        assert_eq!((out.width(), out.height()), (400, 400));
+        assert!(op_resize(flat(700, 540), "400x400:lanczos:tilt").is_err());
+        assert!(op_resize(flat(700, 540), "").is_err());
+    }
+
+    #[test]
+    fn thumbnails_fit_inside_the_box() {
+        let out = op_thumbnail(flat(700, 540), "200").unwrap();
+        assert_eq!((out.width(), out.height()), (200, 154));
+        let out = op_thumbnail(flat(700, 540), "1000x1000").unwrap();
+        assert_eq!((out.width(), out.height()), (700, 540)); // never upscales
+    }
+
+    #[test]
+    fn rotates_by_right_and_free_angles() {
+        let out = op_rotate(flat(700, 540), "90").unwrap();
+        assert_eq!((out.width(), out.height()), (540, 700));
+        let out = op_rotate(flat(700, 540), "180").unwrap();
+        assert_eq!((out.width(), out.height()), (700, 540));
+        let out = op_rotate(flat(700, 540), "45:#ffffff").unwrap();
+        let diag = ((700.0 + 540.0) * std::f64::consts::FRAC_1_SQRT_2).round() as u32;
+        assert_eq!((out.width(), out.height()), (diag, diag));
+        assert!(op_rotate(flat(10, 10), "").is_err());
+    }
+
+    #[test]
+    fn flips_and_color_ops() {
+        assert_eq!(
+            op_flip(flat(3, 5), "v").unwrap().height(),
+            5
+        );
+        let out = op_grayscale(flat(10, 10), "").unwrap();
+        let p = out.to_rgba8().get_pixel(0, 0).0;
+        assert_eq!(p[0], p[1]);
+        assert_eq!(p[1], p[2]);
+        assert_eq!(op_invert(flat(10, 10), "").unwrap().to_rgba8().get_pixel(0, 0).0[0], 245);
+        assert!(op_posterize(flat(10, 10), "1").is_err());
+        assert!(op_brightness(flat(10, 10), "").is_err());
+    }
+
+    #[test]
+    fn alpha_ops_stay_transparent() {
+        let faded = op_opacity(flat(10, 10), "50").unwrap();
+        assert_eq!(faded.to_rgba8().get_pixel(0, 0).0[3], 128);
+        let out = op_pad(flat(10, 10), "20x20:transparent:center").unwrap();
+        assert_eq!((out.width(), out.height()), (20, 20));
+        assert_eq!(out.to_rgba8().get_pixel(0, 0).0[3], 0);
+        // gravity pushes the content to a corner
+        let out = op_pad(flat(10, 10), "40x40:black:nw").unwrap();
+        assert_eq!(out.to_rgba8().get_pixel(5, 5).0, [10, 20, 30, 255]);
+        assert_eq!(out.to_rgba8().get_pixel(39, 39).0, [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn borders_and_trimming() {
+        let out = op_border(flat(10, 10), "3:white").unwrap();
+        assert_eq!((out.width(), out.height()), (16, 16));
+        assert_eq!(out.to_rgba8().get_pixel(0, 0).0, [255, 255, 255, 255]);
+        assert_eq!(out.to_rgba8().get_pixel(8, 8).0, [10, 20, 30, 255]);
+
+        // uniform image: nothing to trim
+        let out = op_trim(flat(40, 40), "auto:10").unwrap();
+        assert_eq!((out.width(), out.height()), (40, 40));
+        // image with a uniform 5px frame around a different core
+        let mut buf = RgbaImage::from_pixel(40, 40, Rgba([255, 255, 255, 255]));
+        for y in 5..35 {
+            for x in 5..35 {
+                buf.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+            }
+        }
+        let out = op_trim(DynamicImage::ImageRgba8(buf), "auto:10").unwrap();
+        assert_eq!((out.width(), out.height()), (30, 30));
+    }
+
+    #[test]
+    fn filter_ops_run() {
+        assert_eq!((op_blur(flat(20, 20), "1.5").unwrap().width()), 20);
+        assert_eq!((op_blur(flat(20, 20), "1.5:fast").unwrap().height()), 20);
+        assert_eq!(op_sharpen(flat(20, 20), "2:3").unwrap().width(), 20);
+        assert_eq!(op_pixelate(flat(20, 20), "8").unwrap().width(), 20);
+        assert_eq!(op_grain(flat(20, 20), "40").unwrap().height(), 20);
+        assert_eq!(op_edge(flat(20, 20), "").unwrap().width(), 20);
+        assert_eq!(op_emboss(flat(20, 20), "").unwrap().height(), 20);
+        assert!(op_blur(flat(20, 20), "0").is_err());
+        assert!(op_sharpen(flat(20, 20), "-1").is_err());
+        // deterministic grain: same input, same output
+        let a = op_grain(flat(8, 8), "50").unwrap().to_rgba8();
+        let b = op_grain(flat(8, 8), "50").unwrap().to_rgba8();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn roundtrips_through_a_real_file() {
+        let dir = std::env::temp_dir().join("ll_image_ops_test");
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("in.png");
+        let output = dir.join("nested/out.jpg");
+        flat(32, 16).save(&input).unwrap();
+
+        let img = read_image(&input.to_string_lossy()).unwrap();
+        let cropped = op_crop(img, "16x8+4+4").unwrap();
+        let save = Save { quality: Some(85), format: None, background: Rgba([255, 255, 255, 255]) };
+        save.write(&cropped, &output.to_string_lossy()).unwrap();
+
+        let back = read_image(&output.to_string_lossy()).unwrap();
+        assert_eq!((back.width(), back.height()), (16, 8));
+        assert_eq!(ImageFormat::from_path(&output).unwrap(), ImageFormat::Jpeg);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

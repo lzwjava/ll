@@ -19,7 +19,14 @@ use ratatui::{
 use std::io;
 use sysinfo::{Disks, System};
 
-fn main() -> io::Result<()> {
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(String::as_str).unwrap_or("");
 
@@ -48,7 +55,7 @@ fn main() -> io::Result<()> {
             eprintln!("Commands:");
             eprintln!("  info     System info (CPU, memory, disks)");
             eprintln!("  gcloud   Google Cloud account & config");
-        eprintln!("  algorithm <name>  Run an algorithm demo ('algorithm list' for all)");
+            eprintln!("  algorithm <name>  Run an algorithm demo ('algorithm list' for all)");
             eprintln!("  uno      Arduino UNO serial monitor");
             eprintln!("  word2vec Word2Vec training");
             eprintln!("  image    Mini image editor ('image list' for commands)");
