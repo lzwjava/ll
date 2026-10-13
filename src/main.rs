@@ -1,5 +1,6 @@
 mod algorithms;
 mod gcloud;
+mod image_ops;
 mod uno;
 mod word2vec;
 
@@ -37,6 +38,10 @@ fn main() -> io::Result<()> {
             let w2v_args: Vec<String> = args[2..].to_vec();
             word2vec::main(&w2v_args)
         }
+        "image" => {
+            let img_args: Vec<String> = args[2..].to_vec();
+            image_ops::main_with_args(&img_args)
+        }
         _ => {
             eprintln!("Usage: ll <command>");
             eprintln!();
@@ -46,6 +51,7 @@ fn main() -> io::Result<()> {
         eprintln!("  algorithm <name>  Run an algorithm demo ('algorithm list' for all)");
             eprintln!("  uno      Arduino UNO serial monitor");
             eprintln!("  word2vec Word2Vec training");
+            eprintln!("  image    Mini image editor ('image list' for commands)");
             Ok(())
         }
     }
