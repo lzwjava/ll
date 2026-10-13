@@ -10,7 +10,9 @@ cargo run -- info  # System info dashboard (press 'q' to quit)
 cargo run -- algorithm list  # List all algorithm demos
 cargo run -- algorithm quicksort  # Run one (80 classic algorithms)
 cargo run -- image list       # List every image command
+cargo run -- video list       # List every video command
 ll image crop photo.png out.png -g 400x300+50+50
+ll video trim clip.mp4 part.mp4 -s 10 -e 25
 ```
 
 ## Algorithms
@@ -91,6 +93,43 @@ Notes:
   (jpeg, bmp, pnm) are flattened onto `--background` (white by default).
 - Every operator also accepts its argument positionally:
   `ll image brightness in.png out.png -30`.
+
+## Video tools
+
+`ll video <command>` handles the common video chores by driving the system
+`ffmpeg` / `ffprobe` binaries (they must be on `PATH` — transcoding in pure Rust
+is not realistic). Every command echoes the exact ffmpeg command line it runs,
+and `--dry-run` prints it without executing. Run `ll video list` for the full
+catalog.
+
+```bash
+ll video info clip.mp4 --json                 # container, streams, codecs, fps
+ll video screenshot clip.mp4 shot.png -t 1:30 # one frame as png/jpg/webp
+ll video frames clip.mp4 shots/f --fps 1      # image sequence (--every N too)
+ll video trim clip.mp4 part.mp4 -s 10 -e 25   # stream copy, --reencode for accuracy
+ll video concat movie.mp4 a.mp4 b.mp4 c.mp4   # join clips
+ll video audio clip.mp4 song.mp3              # mp3/m4a/wav/flac/opus by extension
+ll video mute clip.mp4 silent.mp4             # drop the audio track
+ll video volume clip.mp4 quiet.mp4 -v -6dB    # or -v 0.5
+ll video resize clip.mp4 small.mp4 -w 1280    # -s WxH, --percent, --keep-aspect
+ll video crop clip.mp4 out.mp4 -g 640x480+10+20
+ll video rotate clip.mp4 out.mp4 -a 90        # flip --horizontal/--vertical
+ll video speed clip.mp4 fast.mp4 -v 2         # 0.5x slower, audio follows
+ll video gif clip.mp4 loop.gif -s 12 -w 480   # palette-optimised gif
+ll video gif2video loop.gif clip.mp4
+ll video sprite clip.mp4 sheet.png --cols 4 --rows 3   # contact sheet
+ll video convert clip.mov clip.mp4 --codec h264 --crf 20 --preset slow
+```
+
+Notes:
+
+- Times accept `90`, `1:30` or `01:02:03.5`.
+- `trim`/`concat` stream-copy by default (instant, keyframe-aligned); add
+  `--reencode` for frame-accurate cuts.
+- Transform commands re-encode with sensible container defaults (h264+aac for
+  mp4/mov, vp9+opus for webm) and honour `--crf` / `--preset`.
+- Output directories are created automatically, and missing ffmpeg produces a
+  friendly install hint instead of a crash.
 
 ## Dependencies
 

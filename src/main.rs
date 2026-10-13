@@ -1,7 +1,9 @@
 mod algorithms;
+mod cli;
 mod gcloud;
 mod image_ops;
 mod uno;
+mod video_ops;
 mod word2vec;
 
 use crossterm::{
@@ -49,6 +51,10 @@ fn run() -> io::Result<()> {
             let img_args: Vec<String> = args[2..].to_vec();
             image_ops::main_with_args(&img_args)
         }
+        "video" => {
+            let vid_args: Vec<String> = args[2..].to_vec();
+            video_ops::main_with_args(&vid_args)
+        }
         _ => {
             eprintln!("Usage: ll <command>");
             eprintln!();
@@ -59,6 +65,7 @@ fn run() -> io::Result<()> {
             eprintln!("  uno      Arduino UNO serial monitor");
             eprintln!("  word2vec Word2Vec training");
             eprintln!("  image    Mini image editor ('image list' for commands)");
+            eprintln!("  video    Video tools on ffmpeg ('video list' for commands)");
             Ok(())
         }
     }

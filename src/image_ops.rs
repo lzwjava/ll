@@ -8,11 +8,11 @@
 //! Every pixel operation is registered in [`OPS`], so the same operators can be
 //! chained with `ll image apply in.png out.webp crop:80%x80% grayscale blur:2`.
 
+use crate::cli::{arg_or, err, merge, normalize, parse_f64, parse_opts, parse_u32, pos, req, Opts};
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::{self, FilterType};
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
 use std::io::{self, BufWriter};
@@ -102,119 +102,10 @@ fn list() {
     }
 }
 
-// ─── Argument parsing ────────────────────────────────────────────────────────
-
-#[derive(Default)]
-struct Opts {
-    pos: Vec<String>,
-    vals: HashMap<String, String>,
-    bools: HashSet<String>,
-}
-
-impl Opts {
-    fn get(&self, names: &[&str]) -> Option<&str> {
-        names.iter().find_map(|n| self.vals.get(*n).map(String::as_str))
-    }
-
-    fn has(&self, names: &[&str]) -> bool {
-        names.iter().any(|n| self.bools.contains(*n))
-    }
-}
+// ─── Command table ───────────────────────────────────────────────────────────
 
 const SAVE_VALS: &[&str] = &["--quality", "-q", "--format", "-f", "--background", "-b"];
 const SAVE_BOOLS: &[&str] = &[];
-
-fn merge(a: &[&'static str], b: &[&'static str]) -> Vec<&'static str> {
-    let mut v = a.to_vec();
-    for x in b {
-        if !v.contains(x) {
-            v.push(x);
-        }
-    }
-    v
-}
-
-fn parse_opts(args: &[String], value_flags: &[&str], bool_flags: &[&str]) -> io::Result<Opts> {
-    let mut o = Opts::default();
-    let mut i = 0;
-    while i < args.len() {
-        let a = &args[i];
-        // Negative numbers (e.g. `brightness in out -30`) are positional values,
-        // not flags — flag values themselves are consumed before this check.
-        if a.starts_with('-') && a.len() > 1 && a.parse::<f64>().is_err() {
-            let (name, inline) = match a.find('=') {
-                Some(p) => (&a[..p], Some(a[p + 1..].to_string())),
-                None => (a.as_str(), None),
-            };
-            if value_flags.contains(&name) {
-                let v = match inline {
-                    Some(v) => v,
-                    None => {
-                        i += 1;
-                        args.get(i)
-                            .ok_or_else(|| {
-                                io::Error::new(
-                                    io::ErrorKind::InvalidInput,
-                                    format!("missing value for {name}"),
-                                )
-                            })?
-                            .clone()
-                    }
-                };
-                o.vals.insert(name.to_string(), v);
-            } else if bool_flags.contains(&name) {
-                o.bools.insert(name.to_string());
-            } else {
-                let mut accepted: Vec<&str> = value_flags.to_vec();
-                accepted.extend_from_slice(bool_flags);
-                accepted.sort_unstable();
-                return err(format!(
-                    "unknown flag '{a}'\n  accepted: {}",
-                    accepted.join(", ")
-                ));
-            }
-        } else {
-            o.pos.push(a.clone());
-        }
-        i += 1;
-    }
-    Ok(o)
-}
-
-fn err<T>(msg: impl Into<String>) -> io::Result<T> {
-    Err(io::Error::new(io::ErrorKind::InvalidInput, msg.into()))
-}
-
-fn req<'a>(o: &'a Opts, names: &[&str], msg: &str) -> io::Result<&'a str> {
-    o.get(names)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, msg.to_string()))
-}
-
-fn pos<'a>(o: &'a Opts, i: usize, what: &str) -> io::Result<&'a str> {
-    o.pos
-        .get(i)
-        .map(String::as_str)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("missing {what}")))
-}
-
-/// A flag value, falling back to the first positional argument after `<out>`.
-fn arg_or<'a>(o: &'a Opts, names: &[&str], idx: usize) -> Option<&'a str> {
-    o.get(names).or_else(|| o.pos.get(idx).map(String::as_str))
-}
-
-fn parse_f64(s: &str, what: &str) -> io::Result<f64> {
-    s.trim()
-        .parse::<f64>()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, format!("{what} is not a number: '{s}'")))
-}
-
-fn parse_u32(s: &str, what: &str) -> io::Result<u32> {
-    s.trim()
-        .parse::<u32>()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, format!("{what} is not a number: '{s}'")))
-}
-
-// ─── Command table ───────────────────────────────────────────────────────────
 
 type BuildSpec = fn(&Opts) -> io::Result<String>;
 
@@ -416,13 +307,6 @@ static CMDS: &[Cmd] = &[
         build: b_emboss,
     },
 ];
-
-fn normalize(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
-}
 
 fn find_cmd(name: &str) -> Option<&'static Cmd> {
     let key = normalize(name);
